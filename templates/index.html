@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Cloud Deployment Orchestrator</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f9;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            width: 80%;
+            margin: 30px auto;
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .section {
+            margin-top: 25px;
+        }
+
+        .card {
+            background: #f9f9f9;
+            padding: 15px;
+            border-left: 5px solid #3498db;
+            margin-top: 10px;
+            border-radius: 4px;
+        }
+
+        .success {
+            border-left-color: #2ecc71;
+            background: #eafaf1;
+        }
+
+        .warning {
+            border-left-color: #f39c12;
+            background: #fef5e7;
+        }
+
+        .error {
+            border-left-color: #e74c3c;
+            background: #fdecea;
+        }
+
+        button {
+            padding: 10px 18px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        input[type="file"] {
+            margin-top: 10px;
+        }
+
+        pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        a {
+            color: #2980b9;
+            font-weight: bold;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 13px;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Multi-Cloud Deployment Orchestrator</h1>
+
+    <!-- ================= INPUT SECTION ================= -->
+    <div class="section">
+        <h2>Deployment Configuration</h2>
+
+        <p>
+            Upload a YAML configuration file to automatically deploy your application.
+            The system will analyze requirements and select the most suitable cloud provider.
+        </p>
+
+        <form method="POST" action="/deploy" enctype="multipart/form-data">
+            <label><strong>Upload deployment_config.yaml</strong></label><br>
+            <input type="file" name="config_file" accept=".yaml,.yml" required><br><br>
+            <button type="submit">Deploy Application</button>
+        </form>
+    </div>
+
+    <!-- ================= RESULT SECTION ================= -->
+    {% if result %}
+    <div class="section">
+        <h2>Cloud Decision Engine</h2>
+
+        <div class="card">
+            <p><strong>Application:</strong> {{ result.app }}</p>
+            <p><strong>Environment:</strong> {{ result.environment }}</p>
+            <p><strong>Selected Cloud:</strong> {{ result.decision.selected_cloud }}</p>
+            <p><strong>Reason:</strong> {{ result.decision.reason }}</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Deployment Status</h2>
+
+        <div class="card success">
+            <p><strong>Status:</strong> Deployment Successful</p>
+            <ul>
+                {% for step in result.deployment_steps %}
+                    <li>{{ step }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    {% if result.public_ip %}
+    <div class="section">
+        <h2>Application Access</h2>
+
+        <div class="card warning">
+            <p>Your application is live at:</p>
+            <a href="http://{{ result.public_ip }}" target="_blank">
+                http://{{ result.public_ip }}
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="section">
+        <div class="card">
+            <p>No deployment has been triggered yet.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <footer>
+        Final Year Project – Multi-Cloud Deployment Orchestrator<br>
+        Department of Computer Science
+    </footer>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,12 @@
+app:
+  name: MLService
+  environment: prod
+
+deployment:
+  container:
+    image: pytorch/pytorch
+    port: 8080
+
+requirements:
+  min_uptime: 99.99
+  max_monthly_cost: 40

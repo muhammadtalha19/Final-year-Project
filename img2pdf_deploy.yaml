@@ -1,0 +1,15 @@
+app:
+  name: img2pdf-web
+  environment: prod
+  type: web
+
+deployment:
+  container:
+    image: ghcr.io/muhammadtalha19/fyp/img2pdf:latest
+    port: 5000 
+
+requirements:
+  min_uptime: 99.5
+  max_monthly_cost: 10
+  public_access: true
+  force_deploy: true

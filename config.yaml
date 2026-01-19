@@ -1,0 +1,15 @@
+App1:
+  dev:
+    db_timeout: 30
+    feature_x: true
+  prod:
+    db_timeout: 60
+    feature_x: false
+
+App2:
+  dev:
+    db_timeout: 25
+    feature_x: false
+  prod:
+    db_timeout: 55
+    feature_x: true

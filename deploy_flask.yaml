@@ -1,0 +1,15 @@
+app:
+  name: FlaskAPI
+  environment: dev
+
+deployment:
+  container:
+    image: python:3.10-slim
+    port: 5000
+    command:
+      - python
+      - app.py
+
+requirements:
+  min_uptime: 99.5
+  max_monthly_cost: 10

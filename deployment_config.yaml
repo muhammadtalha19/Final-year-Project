@@ -1,0 +1,12 @@
+app:
+  name: App1
+  environment: dev
+
+deployment:
+  container:
+    image: nginx
+    port: 80
+
+requirements:
+  min_uptime: 99.9
+  max_monthly_cost: 20
