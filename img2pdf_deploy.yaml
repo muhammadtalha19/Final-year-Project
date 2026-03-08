@@ -5,11 +5,11 @@ app:
 
 deployment:
   container:
-    image: ghcr.io/muhammadtalha19/fyp/img2pdf:latest
-    port: 5000 
+    image: dockertalha19/img2pdf:latest
+    port: 80
 
 requirements:
   min_uptime: 99.5
-  max_monthly_cost: 10
+  max_monthly_cost: 20
   public_access: true
   force_deploy: true

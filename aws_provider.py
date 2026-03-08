@@ -1,4 +1,5 @@
 import boto3
+import time
 
 # ------------------------
 # AWS CONFIG
@@ -15,7 +16,7 @@ ec2 = boto3.client("ec2", region_name=REGION)
 
 def deploy_to_aws(container_image, container_port):
     """
-    Launch EC2 and deploy a Docker container passed by orchestrator
+    Launch EC2 and deploy a Docker container using UserData
     """
 
     print(">>> Launching EC2 on AWS")
@@ -23,24 +24,28 @@ def deploy_to_aws(container_image, container_port):
     print(f">>> Container port: {container_port}")
 
     user_data = f"""#!/bin/bash
-dnf update -y
+set -xe
 
-# Install Docker
+dnf update -y
 dnf install docker -y
+
 systemctl start docker
 systemctl enable docker
 
-# Wait for Docker daemon
-sleep 20
+# Give Docker daemon time to fully initialize
+sleep 25
 
-# Pull application image
+# Remove any existing container (idempotent)
+docker rm -f app_container || true
+
+# Pull image from Docker Hub
 docker pull {container_image}
 
-# Run application container
+# Run container
 docker run -d \\
   --name app_container \\
   -p 80:{container_port} \\
-  --restart always \\
+  --restart unless-stopped \\
   {container_image}
 """
 
@@ -57,7 +62,7 @@ docker run -d \\
             {
                 "ResourceType": "instance",
                 "Tags": [
-                    {"Key": "Name", "Value": "fyp-orchestrated-app"}
+                    {"Key": "Name", "Value": "fyp-img2pdf-orchestrated"}
                 ]
             }
         ]
@@ -69,8 +74,11 @@ docker run -d \\
     print(">>> Waiting for instance to enter running state...")
     ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
 
+    # Extra wait to allow cloud-init + docker run to finish
+    time.sleep(40)
+
     desc = ec2.describe_instances(InstanceIds=[instance_id])
     public_ip = desc["Reservations"][0]["Instances"][0]["PublicIpAddress"]
 
-    print(f">>> Application available at http://{public_ip}")
+    print(f">>> Application should be available at: http://{public_ip}")
     return public_ip
