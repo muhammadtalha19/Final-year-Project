@@ -1,5 +1,8 @@
 from typing import Any, Dict, List, Optional
 
+from pricing.models import PriceEstimate
+from pricing.pricing_service import get_price_estimates
+
 
 PROVIDER_CATALOG: Dict[str, Dict[str, Any]] = {
     "AWS": {
@@ -26,15 +29,27 @@ PROVIDER_CATALOG: Dict[str, Dict[str, Any]] = {
 }
 
 
-def select_provider(config: Dict[str, Any]) -> Dict[str, Any]:
+def select_provider(
+    config: Dict[str, Any],
+    price_estimates: Optional[dict[str, PriceEstimate]] = None,
+) -> Dict[str, Any]:
     requirements = config.get("requirements", {})
     deployment_type = config.get("deployment", {}).get("type", "container")
     max_cost = requirements.get("max_monthly_cost_usd")
     min_uptime = requirements.get("min_uptime_percent")
     preferred_region = requirements.get("preferred_region")
+    price_estimates = price_estimates or _safe_price_estimates(config)
 
     evaluated = [
-        _evaluate_provider(name, profile, deployment_type, max_cost, min_uptime, preferred_region)
+        _evaluate_provider(
+            name,
+            profile,
+            deployment_type,
+            max_cost,
+            min_uptime,
+            preferred_region,
+            price_estimates.get(name),
+        )
         for name, profile in PROVIDER_CATALOG.items()
     ]
     eligible = [provider for provider in evaluated if provider["eligible"]]
@@ -74,10 +89,12 @@ def _evaluate_provider(
     max_cost: Optional[float],
     min_uptime: Optional[float],
     preferred_region: Optional[str],
+    price_estimate: Optional[PriceEstimate],
 ) -> Dict[str, Any]:
     rejection_reasons: List[str] = []
 
-    estimated_cost = profile["estimated_cost_usd"]
+    price_estimate = price_estimate or _fallback_price_estimate(name, preferred_region or "")
+    estimated_cost = price_estimate.estimated_monthly_cost_usd
     uptime = profile["uptime_percent"]
     supported_deployments = profile["supported_deployment"]
     regions = profile["regions"]
@@ -94,12 +111,15 @@ def _evaluate_provider(
     eligible = not rejection_reasons
     score = 0.0
     if eligible:
-        score = _score_provider(profile, min_uptime, preferred_region)
+        score = _score_provider(profile, estimated_cost, min_uptime, preferred_region)
 
     return {
         "provider": name,
         "eligible": eligible,
         "estimated_cost_usd": estimated_cost,
+        "pricing_type": price_estimate.pricing_type,
+        "pricing_source": price_estimate.pricing_source,
+        "pricing_notes": price_estimate.notes,
         "uptime_percent": uptime,
         "score": round(score, 2),
         "rejection_reasons": rejection_reasons,
@@ -109,10 +129,11 @@ def _evaluate_provider(
 
 def _score_provider(
     profile: Dict[str, Any],
+    estimated_cost: float,
     min_uptime: Optional[float],
     preferred_region: Optional[str],
 ) -> float:
-    cost_score = max(0.0, 100.0 - float(profile["estimated_cost_usd"]))
+    cost_score = max(0.0, 100.0 - float(estimated_cost))
     uptime_margin = float(profile["uptime_percent"]) - float(min_uptime or 0)
     uptime_score = max(0.0, uptime_margin * 10)
     region_bonus = 5.0 if preferred_region and preferred_region in profile["regions"] else 0.0
@@ -144,4 +165,28 @@ def _decision_reason(selected_provider: str, execution_provider: Optional[str]) 
     return (
         f"Selected provider is {selected_provider} based on requirements, but current execution backend supports "
         "AWS only. AWS is not eligible for these requirements, so deployment is stopped before execution."
+    )
+
+
+def _safe_price_estimates(config: Dict[str, Any]) -> dict[str, PriceEstimate]:
+    try:
+        return get_price_estimates(config)
+    except Exception:
+        preferred_region = config.get("requirements", {}).get("preferred_region", "")
+        return {
+            provider: _fallback_price_estimate(provider, preferred_region)
+            for provider in PROVIDER_CATALOG
+        }
+
+
+def _fallback_price_estimate(provider: str, region: str = "") -> PriceEstimate:
+    profile = PROVIDER_CATALOG[provider]
+    return PriceEstimate(
+        provider=provider,
+        estimated_monthly_cost_usd=float(profile["estimated_cost_usd"]),
+        hourly_cost_usd=None,
+        pricing_type="fallback",
+        pricing_source="provider_catalog",
+        region=region,
+        notes=["Provider catalog fallback pricing used."],
     )

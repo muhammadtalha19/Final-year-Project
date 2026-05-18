@@ -313,6 +313,9 @@
                             <th>Provider</th>
                             <th>Eligible</th>
                             <th>Cost</th>
+                            <th>Pricing Type</th>
+                            <th>Pricing Source</th>
+                            <th>Pricing Notes</th>
                             <th>Uptime</th>
                             <th>Score</th>
                             <th>Rejection Reasons</th>
@@ -328,6 +331,15 @@
                                     </span>
                                 </td>
                                 <td>${{ provider.estimated_cost_usd }}/mo</td>
+                                <td>{{ provider.pricing_type or "N/A" }}</td>
+                                <td>{{ provider.pricing_source or "N/A" }}</td>
+                                <td>
+                                    {% if provider.pricing_notes %}
+                                        {{ provider.pricing_notes|join("; ") }}
+                                    {% else %}
+                                        None
+                                    {% endif %}
+                                </td>
                                 <td>{{ provider.uptime_percent }}%</td>
                                 <td>{{ provider.score }}</td>
                                 <td>

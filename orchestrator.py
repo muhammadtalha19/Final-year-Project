@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional
 from config_schema import ConfigValidationError, validate_config
 from decision_engine import select_provider
 from deployment_history import add_deployment_record
+from pricing.models import PriceEstimate
+from pricing.pricing_service import get_price_estimates
 from providers.aws_provider import AWSProvider
 from providers.azure_mock import AzureMockProvider
 from providers.gcp_mock import GCPMockProvider
@@ -30,6 +32,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
             "validation_errors": exc.errors,
             "warnings": [],
             "decision": {},
+            "pricing": {},
             "deployment": {"status": "not_executed", "message": "Validation failed."},
             "deployment_steps": ["YAML validation failed"],
             "logs": ["YAML validation failed"],
@@ -39,7 +42,8 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         add_deployment_record(result)
         return result
 
-    decision = select_provider(validated)
+    pricing_estimates = get_price_estimates(validated)
+    decision = select_provider(validated, price_estimates=pricing_estimates)
     result = {
         "app": validated["app"]["name"],
         "environment": validated["app"]["environment"],
@@ -47,6 +51,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         "validation_errors": [],
         "warnings": validated.get("warnings", []),
         "decision": decision,
+        "pricing": _pricing_to_dict(pricing_estimates),
         "deployment": {},
         "deployment_steps": ["YAML validation passed", "Provider decision completed"],
         "logs": ["YAML validation passed", "Provider decision completed"],
@@ -150,3 +155,10 @@ def _safe_app_value(config: Optional[Dict[str, Any]], key: str) -> Optional[str]
     if not isinstance(app, dict):
         return None
     return app.get(key)
+
+
+def _pricing_to_dict(price_estimates: dict[str, PriceEstimate]) -> Dict[str, Any]:
+    return {
+        provider: estimate.to_dict()
+        for provider, estimate in price_estimates.items()
+    }

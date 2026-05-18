@@ -66,6 +66,7 @@ AWS_KEY_NAME=
 AWS_SECURITY_GROUP_ID=
 AWS_SUBNET_ID=
 DEPLOYMENT_TIMEOUT_SECONDS=180
+ENABLE_LIVE_PRICING=false
 ```
 
 Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
@@ -139,6 +140,18 @@ The decision engine first applies hard filters:
 
 Eligible providers are scored using lower cost, higher uptime, preferred region match, and a small execution-backend bonus. The execution bonus is intentionally small so a better logical cloud selection is not hidden by AWS-only execution support.
 
+## Dynamic Pricing MVP
+
+The decision engine now reads provider cost estimates from the pricing layer. By default, `ENABLE_LIVE_PRICING=false`, so AWS, GCP, and Azure use static fallback estimates.
+
+Azure Retail Prices API lookup can be enabled with:
+
+```text
+ENABLE_LIVE_PRICING=true
+```
+
+For this MVP, Azure live pricing is approximate and currently uses a simple Azure Retail Prices API lookup. AWS and GCP still use fallback pricing; AWS Pricing API and GCP Pricing API are not implemented yet. These estimates are not exact bills, and the final cloud bill may differ because of region, usage duration, networking, storage, discounts, free tiers, taxes, and provider-specific charges.
+
 ## AWS Deployment
 
 AWS deployment uses `boto3` to launch an EC2 instance and passes Docker setup commands through EC2 user data. For multi-service YAML files, the AWS provider generates one `docker run` command per service. It returns the instance ID, public IP, public service endpoints, status, and a message.
@@ -151,11 +164,12 @@ The orchestrator never pretends that GCP or Azure deployment exists. If GCP or A
 pytest
 ```
 
-The tests cover YAML validation, decision filtering, provider selection, and a no-real-cloud-deployment guard.
+The tests cover YAML validation, decision filtering, pricing fallback behavior, provider selection, and a no-real-cloud-deployment guard.
 
 ## Limitations
 
-- Provider cost and uptime values are static catalog entries.
+- AWS and GCP pricing currently use static fallback estimates.
+- Azure live pricing is an MVP estimate and may not match exact deployment cost.
 - Real deployment is implemented only for AWS EC2 Docker.
 - GCP and Azure are mock providers for decision-layer extensibility.
 - EC2 networking, security group rules, IAM permissions, and image availability must be configured manually.

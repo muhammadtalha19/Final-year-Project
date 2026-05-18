@@ -48,6 +48,7 @@ def test_decision_engine_selects_lowest_cost_eligible_provider_when_uptime_is_sa
 
     assert decision["selected_provider"] == "GCP"
     assert decision["execution_provider"] == "AWS"
+    assert all("pricing_type" in provider for provider in decision["evaluated_providers"])
 
 
 def test_no_real_cloud_deployment_is_triggered_during_tests(monkeypatch, tmp_path):
