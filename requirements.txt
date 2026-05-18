@@ -1,2 +1,8 @@
-flask
-pyyaml
+Flask
+PyYAML
+boto3
+botocore
+python-dotenv
+pydantic
+requests
+pytest

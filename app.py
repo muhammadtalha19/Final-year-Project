@@ -1,7 +1,17 @@
+import os
 from flask import Flask, jsonify, render_template, request
 import yaml
-import os
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - dependency is installed in the project environment.
+    def load_dotenv() -> None:
+        return None
+
+from deployment_history import load_deployment_history
 from orchestrator import deploy_app
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -21,33 +31,46 @@ except FileNotFoundError:
 
 @app.route("/", methods=["GET"])
 def home():
-    return render_template("index.html")
+    return render_template("index.html", history=load_deployment_history(limit=10))
 
 
 # ya deploy route ha (YAML-DRIVEN)
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
-    print(">>> DEPLOY BUTTON CLICKED <<<")
-
     uploaded_file = request.files.get("config_file")
 
     if not uploaded_file:
-        return "No deployment_config.yaml uploaded", 400
+        result = {
+            "status": "validation_failed",
+            "validation_errors": ["No YAML configuration file was uploaded."],
+            "decision": {},
+            "deployment": {"status": "not_executed"},
+            "public_endpoints": [],
+            "health_check": {"status": "skipped", "message": "No file was uploaded."},
+        }
+        return render_template("index.html", result=result, history=load_deployment_history(limit=10)), 400
 
     try:
-        # Parse YAML from the uploaded file stream safely
         deployment_config = yaml.safe_load(uploaded_file.stream)
     except Exception as e:
-        return f"Invalid YAML file: {e}", 400
-
-    print(">>> DEPLOYMENT CONFIG:", deployment_config)
+        result = {
+            "status": "validation_failed",
+            "validation_errors": [f"Invalid YAML file: {e}"],
+            "decision": {},
+            "deployment": {"status": "not_executed"},
+            "public_endpoints": [],
+            "health_check": {"status": "skipped", "message": "Invalid YAML."},
+        }
+        return render_template("index.html", result=result, history=load_deployment_history(limit=10)), 400
 
     result = deploy_app(deployment_config)
+    return render_template("index.html", result=result, history=load_deployment_history(limit=10))
 
-    print(">>> DEPLOY RESULT:", result)
 
-    return render_template("index.html", result=result)
+@app.route("/history", methods=["GET"])
+def history():
+    return render_template("index.html", history=load_deployment_history(), show_history=True)
 
 
 # ya api route ha configurantion management ky liye (API ROUTES (Config Management)).
@@ -71,4 +94,4 @@ def get_config(app_name, env, key):
 # ya main body ha.
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=os.getenv("FLASK_ENV") == "development")

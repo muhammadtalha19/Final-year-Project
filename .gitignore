@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+pycache/
+*.pyc
+.env
+*.pem
+.pem
+logs/*.log
+logs/.log
+.vscode/
+.pytest_cache/
+deployments.json
