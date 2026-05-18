@@ -140,3 +140,39 @@ def test_real_deployment_enabled_without_provider_allow_flag_is_blocked(monkeypa
 
     assert result["status"] == "blocked_by_safety_flag"
     assert result["deployment"]["status"] == "blocked_by_safety_flag"
+
+
+def test_orchestrator_does_not_generate_plan_when_manual_selection_is_blocked(monkeypatch):
+    called = {"plan": False}
+
+    def fail_if_called(self, config):
+        called["plan"] = True
+        raise AssertionError("plan should not be generated for blocked manual selection")
+
+    monkeypatch.setattr(AWSProvider, "generate_plan", fail_if_called)
+    raw = yaml.safe_load(
+        """
+        app:
+          name: blocked-manual
+          environment: production
+        selection:
+          mode: manual
+          provider: AWS
+        deployment:
+          type: container
+          image: nginx
+          port: 80
+        requirements:
+          max_monthly_cost_usd: 15
+          min_uptime_percent: 99.9
+          preferred_region: asia
+          public_access: true
+        """
+    )
+
+    result = orchestrator.deploy_app(validate_config(raw))
+
+    assert result["status"] == "manual_selection_blocked"
+    assert result["deployment"]["status"] == "manual_selection_blocked"
+    assert result["generated_commands"] == []
+    assert called["plan"] is False

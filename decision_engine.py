@@ -38,6 +38,9 @@ def select_provider(
     max_cost = requirements.get("max_monthly_cost_usd")
     min_uptime = requirements.get("min_uptime_percent")
     preferred_region = requirements.get("preferred_region")
+    selection = config.get("selection", {})
+    selection_mode = selection.get("mode", "auto")
+    manual_provider = selection.get("provider") if selection_mode == "manual" else None
     price_estimates = price_estimates or _safe_price_estimates(config)
 
     evaluated = [
@@ -53,26 +56,41 @@ def select_provider(
         for name, profile in PROVIDER_CATALOG.items()
     ]
     eligible = [provider for provider in evaluated if provider["eligible"]]
+    recommended = _best_provider(eligible)
 
     selected_provider: Optional[str] = None
     execution_provider: Optional[str] = None
+    recommended_provider = recommended["provider"] if recommended else None
+    status = "no_provider_eligible"
 
-    if eligible:
-        selected = max(
-            eligible,
-            key=lambda item: (
-                item["score"],
-                -item["estimated_cost_usd"],
-                item["uptime_percent"],
-            ),
-        )
+    if selection_mode == "manual":
+        manual_evaluation = next((item for item in evaluated if item["provider"] == manual_provider), None)
+        if manual_evaluation and manual_evaluation["eligible"]:
+            selected_provider = manual_provider
+            execution_provider = manual_provider
+            status = "selected"
+            reason = (
+                f"User manually selected {manual_provider}, and it satisfies the cost, uptime, deployment, "
+                "and region requirements."
+            )
+        else:
+            status = "manual_selection_blocked"
+            rejection_reasons = manual_evaluation.get("rejection_reasons", []) if manual_evaluation else []
+            reason = _manual_blocked_reason(manual_provider, rejection_reasons, recommended_provider)
+    elif recommended:
+        selected = recommended
         selected_provider = selected["provider"]
         execution_provider = _execution_provider_for(selected_provider, evaluated)
+        status = "selected"
         reason = _decision_reason(selected_provider, execution_provider)
     else:
         reason = "No provider satisfied the requested cost, uptime, deployment, and region constraints."
 
     return {
+        "status": status,
+        "selection_mode": selection_mode,
+        "manual_provider": manual_provider,
+        "recommended_provider": recommended_provider,
         "selected_provider": selected_provider,
         "execution_provider": execution_provider,
         "selected_cloud": selected_provider,
@@ -80,6 +98,19 @@ def select_provider(
         "reason": reason,
         "evaluated_providers": evaluated,
     }
+
+
+def _best_provider(eligible: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not eligible:
+        return None
+    return max(
+        eligible,
+        key=lambda item: (
+            item["score"],
+            -item["estimated_cost_usd"],
+            item["uptime_percent"],
+        ),
+    )
 
 
 def _evaluate_provider(
@@ -166,6 +197,20 @@ def _decision_reason(selected_provider: str, execution_provider: Optional[str]) 
         f"Selected provider is {selected_provider} based on requirements, but current execution backend supports "
         "AWS only. AWS is not eligible for these requirements, so deployment is stopped before execution."
     )
+
+
+def _manual_blocked_reason(
+    manual_provider: Optional[str],
+    rejection_reasons: List[str],
+    recommended_provider: Optional[str],
+) -> str:
+    provider_label = manual_provider or "the requested provider"
+    reason = f"User manually selected {provider_label}, but it does not satisfy the hard requirements."
+    if rejection_reasons:
+        reason += " Blocking reason(s): " + "; ".join(rejection_reasons)
+    if recommended_provider:
+        reason += f" Recommended eligible provider: {recommended_provider}."
+    return reason
 
 
 def _safe_price_estimates(config: Dict[str, Any]) -> dict[str, PriceEstimate]:

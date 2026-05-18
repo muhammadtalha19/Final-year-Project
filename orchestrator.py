@@ -65,6 +65,23 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         "health_check": _skipped_health("Health check has not run yet."),
     }
 
+    if decision.get("status") == "manual_selection_blocked":
+        result.update(
+            {
+                "status": "manual_selection_blocked",
+                "deployment": {
+                    "status": "manual_selection_blocked",
+                    "message": decision["reason"],
+                },
+                "generated_commands": [],
+                "health_check": _skipped_health("Health check skipped because manual provider selection was blocked."),
+            }
+        )
+        result["deployment_steps"].append("Deployment stopped before plan generation")
+        result["logs"] = list(result["deployment_steps"])
+        add_deployment_record(result)
+        return result
+
     if not decision.get("selected_provider"):
         result.update(
             {
@@ -91,7 +108,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
             decision,
             execution_provider,
             (
-                f"{selected_provider} was selected by the decision engine. Dry-run mode is enabled, so the "
+                f"{decision['reason']} Dry-run mode is enabled, so the "
                 f"orchestrator generated a {selected_provider} deployment plan without executing cloud commands."
             ),
         )
@@ -115,7 +132,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
     decision = _decision_for_selected_execution(
         decision,
         execution_provider,
-        f"{selected_provider} was selected by the decision engine for real deployment mode.",
+        f"{decision['reason']} Real deployment mode is enabled for {selected_provider}.",
     )
     result["decision"] = decision
 

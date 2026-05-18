@@ -130,6 +130,25 @@ requirements:
   public_access: true
 ```
 
+## Cloud Selection Modes
+
+By default, YAML files use auto mode, where the system evaluates AWS, GCP, and Azure and selects the highest-scoring eligible provider:
+
+```yaml
+selection:
+  mode: auto
+```
+
+Manual mode lets the user request a specific provider:
+
+```yaml
+selection:
+  mode: manual
+  provider: AWS
+```
+
+Manual provider values must be `AWS`, `GCP`, or `Azure`. Manual selection does not bypass safety checks: the selected provider is still validated against cost, uptime, preferred region, and deployment support. If the manual provider is blocked, the orchestrator stops before generating a deployment plan and shows a recommended eligible provider when one exists.
+
 ## Running Locally
 
 ```bash

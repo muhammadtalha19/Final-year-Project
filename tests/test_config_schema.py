@@ -32,6 +32,7 @@ def test_valid_single_service_yaml_passes_validation():
     assert config["deployment"]["type"] == "container"
     assert config["services"][0]["image"] == "dockertalha19/img2pdf"
     assert config["services"][0]["port"] == 80
+    assert config["selection"] == {"mode": "auto", "provider": None}
 
 
 def test_valid_multi_service_yaml_passes_validation():
@@ -105,3 +106,27 @@ def test_invalid_port_fails_validation():
         validate_config(raw)
 
     assert "port" in str(exc_info.value).lower()
+
+
+def test_auto_selection_ignores_provider_if_present():
+    raw = yaml.safe_load(
+        """
+        app:
+          name: auto-with-provider
+          environment: production
+        selection:
+          mode: auto
+          provider: NotACloud
+        deployment:
+          type: container
+          image: nginx
+          port: 80
+        requirements:
+          max_monthly_cost_usd: 20
+          min_uptime_percent: 99.9
+        """
+    )
+
+    config = validate_config(raw)
+
+    assert config["selection"] == {"mode": "auto", "provider": None}

@@ -31,6 +31,7 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     requirements = _mapping(source.get("requirements"), "requirements", errors)
     deployment = source.get("deployment")
     services = source.get("services")
+    selection = _normalize_selection(source.get("selection"), errors)
 
     app_name = _required_string(app, "name", "app.name", errors)
     environment = _required_string(app, "environment", "app.environment", errors)
@@ -87,6 +88,7 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
             "preferred_region": preferred_region.lower() if preferred_region else None,
             "public_access": public_access,
         },
+        "selection": selection,
         "warnings": warnings,
     }
 
@@ -198,6 +200,65 @@ def _first_present(mapping: Optional[Dict[str, Any]], keys: List[str], default: 
         if key in mapping:
             return mapping[key]
     return default
+
+
+def _normalize_selection(value: Any, errors: List[str]) -> Dict[str, Optional[str]]:
+    if value is None:
+        return {
+            "mode": "auto",
+            "provider": None,
+        }
+
+    if not isinstance(value, dict):
+        errors.append("selection must be a mapping/object when provided.")
+        return {
+            "mode": "auto",
+            "provider": None,
+        }
+
+    mode_value = value.get("mode", "auto")
+    if not isinstance(mode_value, str):
+        errors.append("selection.mode must be either auto or manual.")
+        mode = "auto"
+    else:
+        mode = mode_value.strip().lower()
+        if mode not in {"auto", "manual"}:
+            errors.append("selection.mode must be either auto or manual.")
+            mode = "auto"
+
+    if mode == "auto":
+        return {
+            "mode": mode,
+            "provider": None,
+        }
+
+    provider_value = value.get("provider")
+    provider = _normalize_provider(provider_value, "selection.provider", errors) if provider_value is not None else None
+
+    if provider is None:
+        errors.append("selection.provider is required when selection.mode is manual.")
+
+    return {
+        "mode": mode,
+        "provider": provider,
+    }
+
+
+def _normalize_provider(value: Any, field: str, errors: List[str]) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{field} must be one of AWS, GCP, Azure.")
+        return None
+
+    normalized = value.strip().lower()
+    providers = {
+        "aws": "AWS",
+        "gcp": "GCP",
+        "azure": "Azure",
+    }
+    provider = providers.get(normalized)
+    if provider is None:
+        errors.append(f"{field} must be one of AWS, GCP, Azure.")
+    return provider
 
 
 def _normalize_services(
