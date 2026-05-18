@@ -2,5 +2,10 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def disable_live_pricing(monkeypatch):
+def safe_test_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("ENABLE_LIVE_PRICING", "false")
+    monkeypatch.setenv("ENABLE_REAL_DEPLOYMENT", "false")
+    monkeypatch.setenv("ALLOW_AWS_DEPLOYMENT", "false")
+    monkeypatch.setenv("ALLOW_GCP_DEPLOYMENT", "false")
+    monkeypatch.setenv("ALLOW_AZURE_DEPLOYMENT", "false")
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FILE", str(tmp_path / "history.json"))

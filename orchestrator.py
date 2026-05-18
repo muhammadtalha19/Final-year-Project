@@ -1,3 +1,5 @@
+import os
+from copy import deepcopy
 from typing import Any, Dict, Optional
 
 from config_schema import ConfigValidationError, validate_config
@@ -29,6 +31,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
             "app": _safe_app_value(config, "name"),
             "environment": _safe_app_value(config, "environment"),
             "status": "validation_failed",
+            "deployment_mode": "dry_run" if not _real_deployment_enabled() else "real",
             "validation_errors": exc.errors,
             "warnings": [],
             "decision": {},
@@ -36,6 +39,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
             "deployment": {"status": "not_executed", "message": "Validation failed."},
             "deployment_steps": ["YAML validation failed"],
             "logs": ["YAML validation failed"],
+            "generated_commands": [],
             "public_endpoints": [],
             "health_check": _skipped_health("Health check skipped because validation failed."),
         }
@@ -48,6 +52,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         "app": validated["app"]["name"],
         "environment": validated["app"]["environment"],
         "status": "pending",
+        "deployment_mode": "real" if _real_deployment_enabled() else "dry_run",
         "validation_errors": [],
         "warnings": validated.get("warnings", []),
         "decision": decision,
@@ -55,6 +60,7 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         "deployment": {},
         "deployment_steps": ["YAML validation passed", "Provider decision completed"],
         "logs": ["YAML validation passed", "Provider decision completed"],
+        "generated_commands": [],
         "public_endpoints": [],
         "health_check": _skipped_health("Health check has not run yet."),
     }
@@ -75,7 +81,44 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         add_deployment_record(result)
         return result
 
-    execution_provider = decision.get("execution_provider")
+    selected_provider = decision["selected_provider"]
+
+    if not _real_deployment_enabled():
+        execution_provider = selected_provider
+        provider = _provider_instance(execution_provider)
+        deployment = provider.generate_plan(validated)
+        decision = _decision_for_selected_execution(
+            decision,
+            execution_provider,
+            (
+                f"{selected_provider} was selected by the decision engine. Dry-run mode is enabled, so the "
+                f"orchestrator generated a {selected_provider} deployment plan without executing cloud commands."
+            ),
+        )
+        result.update(
+            {
+                "status": "dry_run",
+                "deployment_mode": "dry_run",
+                "decision": decision,
+                "deployment": deployment,
+                "generated_commands": deployment.get("generated_commands", []),
+                "health_check": _skipped_health("Health check skipped because dry-run mode does not execute deployment."),
+            }
+        )
+        result["deployment_steps"].append(f"Dry-run provider: {execution_provider}")
+        result["deployment_steps"].append(deployment.get("message", "Dry-run plan generated."))
+        result["logs"] = list(result["deployment_steps"])
+        add_deployment_record(result)
+        return result
+
+    execution_provider = selected_provider
+    decision = _decision_for_selected_execution(
+        decision,
+        execution_provider,
+        f"{selected_provider} was selected by the decision engine for real deployment mode.",
+    )
+    result["decision"] = decision
+
     if not execution_provider:
         result.update(
             {
@@ -92,10 +135,38 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         add_deployment_record(result)
         return result
 
+    if not _provider_deployment_allowed(execution_provider):
+        provider = _provider_instance(execution_provider)
+        plan = provider.generate_plan(validated)
+        deployment = {
+            **plan,
+            "status": "blocked_by_safety_flag",
+            "deployment_mode": "real",
+            "message": (
+                f"Real deployment is enabled, but ALLOW_{execution_provider}_DEPLOYMENT is not true. "
+                "No cloud commands were executed."
+            ),
+        }
+        result.update(
+            {
+                "status": "blocked_by_safety_flag",
+                "deployment_mode": "real",
+                "deployment": deployment,
+                "generated_commands": plan.get("generated_commands", []),
+                "health_check": _skipped_health("Health check skipped because deployment was blocked by safety flag."),
+            }
+        )
+        result["deployment_steps"].append(f"Execution provider: {execution_provider}")
+        result["deployment_steps"].append(deployment["message"])
+        result["logs"] = list(result["deployment_steps"])
+        add_deployment_record(result)
+        return result
+
     if not execute:
         result.update(
             {
                 "status": "execution_skipped",
+                "deployment_mode": "real",
                 "deployment": {
                     "provider": execution_provider,
                     "status": "skipped",
@@ -120,7 +191,9 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
     result.update(
         {
             "status": deployment.get("status", "unknown"),
+            "deployment_mode": "real",
             "deployment": deployment,
+            "generated_commands": deployment.get("generated_commands", []),
             "public_ip": deployment.get("public_ip"),
             "public_endpoints": endpoints,
             "health_check": health_check,
@@ -162,3 +235,27 @@ def _pricing_to_dict(price_estimates: dict[str, PriceEstimate]) -> Dict[str, Any
         provider: estimate.to_dict()
         for provider, estimate in price_estimates.items()
     }
+
+
+def _real_deployment_enabled() -> bool:
+    return _env_bool("ENABLE_REAL_DEPLOYMENT")
+
+
+def _provider_deployment_allowed(provider_name: str) -> bool:
+    return _env_bool(f"ALLOW_{provider_name}_DEPLOYMENT")
+
+
+def _env_bool(name: str) -> bool:
+    return os.getenv(name, "false").strip().lower() == "true"
+
+
+def _decision_for_selected_execution(
+    decision: Dict[str, Any],
+    execution_provider: str,
+    reason: str,
+) -> Dict[str, Any]:
+    updated = deepcopy(decision)
+    updated["execution_provider"] = execution_provider
+    updated["execution_cloud"] = execution_provider
+    updated["reason"] = reason
+    return updated

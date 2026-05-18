@@ -33,6 +33,57 @@ class AWSProvider(CloudProvider):
     def estimate(self, config: Dict[str, Any]) -> Dict[str, Any]:
         return PROVIDER_CATALOG[self.name].copy()
 
+    def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        services = get_service_definitions(config)
+        first_service = services[0] if services else {}
+        generated_commands = [
+            {
+                "service": service["name"],
+                "command": [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    _safe_name(service["name"]),
+                    "-p",
+                    f"{int(service['port'])}:{int(service['port'])}",
+                    "--restart",
+                    "unless-stopped",
+                    service["image"],
+                ],
+                "command_string": (
+                    "docker run -d "
+                    f"--name {_safe_name(service['name'])} "
+                    f"-p {int(service['port'])}:{int(service['port'])} "
+                    f"--restart unless-stopped {shlex.quote(service['image'])}"
+                ),
+            }
+            for service in services
+        ]
+
+        return {
+            "provider": self.name,
+            "deployment_type": "EC2_DOCKER",
+            "status": "dry_run",
+            "deployment_mode": "dry_run",
+            "image": first_service.get("image"),
+            "port": first_service.get("port"),
+            "region": self.region or "",
+            "instance_type": self.instance_type,
+            "required_env_vars": [
+                "AWS_REGION",
+                "AWS_AMI_ID",
+                "AWS_KEY_NAME",
+                "AWS_SECURITY_GROUP_ID",
+                "AWS_SUBNET_ID",
+            ],
+            "services": services,
+            "generated_commands": generated_commands,
+            "message": "AWS EC2 Docker dry-run plan generated. No EC2 instance was launched.",
+            "logs": ["Dry-run only; boto3 was not called."],
+            "service_endpoints": [],
+        }
+
     def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
         missing = self._missing_config()
         if missing:

@@ -63,5 +63,5 @@ def test_no_real_cloud_deployment_is_triggered_during_tests(monkeypatch, tmp_pat
 
     result = deploy_app(_config(max_cost=20, min_uptime=99.9), execute=False)
 
-    assert result["status"] == "execution_skipped"
+    assert result["status"] == "dry_run"
     assert called["aws_deploy"] is False

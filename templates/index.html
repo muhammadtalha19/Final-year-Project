@@ -212,6 +212,17 @@
             margin: 12px 0;
         }
 
+        pre {
+            margin: 8px 0 14px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #111827;
+            color: #f8fafc;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+
         @media (max-width: 700px) {
             header {
                 display: block;
@@ -256,7 +267,7 @@
             <h2>Deployment Result</h2>
             {% set state = result.status or "unknown" %}
             <p>
-                <span class="status {% if state in ['deployed', 'passed'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error'] %}warning{% endif %}">
+                <span class="status {% if state in ['deployed', 'passed'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag'] %}warning{% endif %}">
                     {{ state|replace("_", " ") }}
                 </span>
             </p>
@@ -296,11 +307,15 @@
                         <span class="label">Selected Provider</span>
                         {{ decision.selected_provider or "None" }}
                     </div>
-                    <div>
-                        <span class="label">Execution Provider</span>
-                        {{ decision.execution_provider or "None" }}
-                    </div>
+                <div>
+                    <span class="label">Execution Provider</span>
+                    {{ decision.execution_provider or "None" }}
                 </div>
+                <div>
+                    <span class="label">Deployment Mode</span>
+                    {{ result.deployment_mode or "N/A" }}
+                </div>
+            </div>
 
                 <h3>Decision Reasoning</h3>
                 <p>{{ decision.reason }}</p>
@@ -360,6 +375,10 @@
             <h3>Deployment Status</h3>
             <div class="meta">
                 <div>
+                    <span class="label">Mode</span>
+                    {{ result.deployment_mode or deployment.deployment_mode or "N/A" }}
+                </div>
+                <div>
                     <span class="label">Status</span>
                     {{ deployment.status or result.status or "N/A" }}
                 </div>
@@ -382,6 +401,15 @@
                         <li>{{ step }}</li>
                     {% endfor %}
                 </ul>
+            {% endif %}
+
+            {% set commands = result.generated_commands or deployment.generated_commands %}
+            {% if commands %}
+                <h3>Generated Commands</h3>
+                {% for command in commands %}
+                    <p><strong>{{ command.service or "service" }}</strong></p>
+                    <pre>{{ command.command_string or command.command|join(" ") }}</pre>
+                {% endfor %}
             {% endif %}
 
             <h3>Public Endpoints</h3>

@@ -67,6 +67,15 @@ AWS_SECURITY_GROUP_ID=
 AWS_SUBNET_ID=
 DEPLOYMENT_TIMEOUT_SECONDS=180
 ENABLE_LIVE_PRICING=false
+ENABLE_REAL_DEPLOYMENT=false
+ALLOW_AWS_DEPLOYMENT=false
+ALLOW_GCP_DEPLOYMENT=false
+ALLOW_AZURE_DEPLOYMENT=false
+GCP_REGION=asia-south1
+GCP_PLATFORM=managed
+AZURE_RESOURCE_GROUP=
+AZURE_LOCATION=eastus
+AZURE_CONTAINERAPP_ENV=
 ```
 
 Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
@@ -152,6 +161,18 @@ ENABLE_LIVE_PRICING=true
 
 For this MVP, Azure live pricing is approximate and currently uses a simple Azure Retail Prices API lookup. AWS and GCP still use fallback pricing; AWS Pricing API and GCP Pricing API are not implemented yet. These estimates are not exact bills, and the final cloud bill may differ because of region, usage duration, networking, storage, discounts, free tiers, taxes, and provider-specific charges.
 
+## Multi-cloud Dry Run Mode
+
+Real deployment is disabled by default:
+
+```text
+ENABLE_REAL_DEPLOYMENT=false
+```
+
+In dry-run mode, the orchestrator uses the selected provider directly and generates a safe provider-specific deployment plan without executing cloud commands. AWS shows an EC2 Docker plan, GCP shows a Cloud Run `gcloud run deploy` command, and Azure shows an Azure Container Apps `az containerapp create` command. No EC2 instance is launched, and no `gcloud` or `az` command is executed.
+
+To attempt real deployment, `ENABLE_REAL_DEPLOYMENT=true` must be set and the selected provider must also have its allow flag enabled, such as `ALLOW_AWS_DEPLOYMENT=true`. GCP and Azure real execution are still not implemented; their provider classes only return clear not-implemented responses.
+
 ## AWS Deployment
 
 AWS deployment uses `boto3` to launch an EC2 instance and passes Docker setup commands through EC2 user data. For multi-service YAML files, the AWS provider generates one `docker run` command per service. It returns the instance ID, public IP, public service endpoints, status, and a message.
@@ -164,7 +185,7 @@ The orchestrator never pretends that GCP or Azure deployment exists. If GCP or A
 pytest
 ```
 
-The tests cover YAML validation, decision filtering, pricing fallback behavior, provider selection, and a no-real-cloud-deployment guard.
+The tests cover YAML validation, decision filtering, pricing fallback behavior, provider selection, dry-run command generation, and a no-real-cloud-deployment guard.
 
 ## Limitations
 
@@ -172,6 +193,7 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 - Azure live pricing is an MVP estimate and may not match exact deployment cost.
 - Real deployment is implemented only for AWS EC2 Docker.
 - GCP and Azure are mock providers for decision-layer extensibility.
+- Dry-run commands are generated for demonstration and review; they are not executed by the dashboard.
 - EC2 networking, security group rules, IAM permissions, and image availability must be configured manually.
 - Health checks depend on the public endpoint becoming reachable within `DEPLOYMENT_TIMEOUT_SECONDS`.
 

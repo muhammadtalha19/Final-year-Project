@@ -10,6 +10,10 @@ class CloudProvider(ABC):
         """Return estimated provider metadata for the config."""
 
     @abstractmethod
+    def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a provider-specific dry-run deployment plan without executing commands."""
+
+    @abstractmethod
     def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Deploy the validated config and return deployment metadata."""
 
