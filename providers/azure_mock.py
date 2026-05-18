@@ -1,5 +1,7 @@
 import os
 import shlex
+import subprocess
+import time
 from typing import Any, Dict
 
 from config_schema import get_service_definitions
@@ -10,13 +12,16 @@ from providers.base import CloudProvider
 class AzureMockProvider(CloudProvider):
     name = "Azure"
 
+    def __init__(self) -> None:
+        self.resource_group = os.getenv("AZURE_RESOURCE_GROUP", "")
+        self.location = os.getenv("AZURE_LOCATION", "")
+        self.containerapp_env = os.getenv("AZURE_CONTAINERAPP_ENV", "")
+        self.timeout_seconds = int(os.getenv("DEPLOYMENT_TIMEOUT_SECONDS", "180"))
+
     def estimate(self, config: Dict[str, Any]) -> Dict[str, Any]:
         return PROVIDER_CATALOG[self.name].copy()
 
     def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        resource_group = os.getenv("AZURE_RESOURCE_GROUP", "")
-        containerapp_env = os.getenv("AZURE_CONTAINERAPP_ENV", "")
-        location = os.getenv("AZURE_LOCATION", "eastus")
         commands = []
 
         for service in get_service_definitions(config):
@@ -28,9 +33,9 @@ class AzureMockProvider(CloudProvider):
                 "--name",
                 _service_name(config, service),
                 "--resource-group",
-                resource_group or "<AZURE_RESOURCE_GROUP>",
+                self.resource_group or "<AZURE_RESOURCE_GROUP>",
                 "--environment",
-                containerapp_env or "<AZURE_CONTAINERAPP_ENV>",
+                self.containerapp_env or "<AZURE_CONTAINERAPP_ENV>",
                 "--image",
                 service["image"],
                 "--target-port",
@@ -55,24 +60,135 @@ class AzureMockProvider(CloudProvider):
             "deployment_type": "AZURE_CONTAINER_APPS",
             "status": "dry_run",
             "deployment_mode": "dry_run",
-            "location": location,
-            "resource_group": resource_group,
-            "containerapp_environment": containerapp_env,
-            "required_env_vars": ["AZURE_RESOURCE_GROUP", "AZURE_CONTAINERAPP_ENV"],
+            "location": self.location,
+            "resource_group": self.resource_group,
+            "containerapp_environment": self.containerapp_env,
+            "required_env_vars": ["AZURE_RESOURCE_GROUP", "AZURE_CONTAINERAPP_ENV", "AZURE_LOCATION"],
             "generated_commands": commands,
             "message": "Azure Container Apps dry-run plan generated. No az command was executed.",
             "logs": ["Dry-run only; subprocess and Azure CLI were not called."],
+            "endpoints": [],
             "service_endpoints": [],
         }
 
     def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        missing = self._missing_config()
+        if missing:
+            return {
+                "provider": self.name,
+                "status": "configuration_error",
+                "missing_vars": missing,
+                "message": "Missing Azure environment variables: " + ", ".join(missing),
+                "logs": [],
+                "generated_commands": [],
+                "endpoints": [],
+                "service_endpoints": [],
+            }
+
+        plan = self.generate_plan(config)
+        commands = plan.get("generated_commands", [])
+        endpoints = []
+        raw_outputs = []
+
+        try:
+            for command in commands:
+                completed = subprocess.run(
+                    command["command"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                fqdn = completed.stdout.strip()
+                raw_outputs.append(
+                    {
+                        "service": command["service"],
+                        "stdout": completed.stdout,
+                        "stderr": completed.stderr,
+                    }
+                )
+                if fqdn:
+                    endpoints.append(
+                        {
+                            "name": command["service"],
+                            "url": f"https://{fqdn}",
+                            "fqdn": fqdn,
+                        }
+                    )
+
+            return {
+                "provider": self.name,
+                "status": "deployed",
+                "fqdn": endpoints[0]["fqdn"] if endpoints else None,
+                "endpoints": endpoints,
+                "service_endpoints": endpoints,
+                "generated_commands": commands,
+                "raw_output": raw_outputs,
+                "message": "Azure Container Apps deployment completed through Azure CLI.",
+                "logs": [f"Executed {len(commands)} Azure Container Apps command(s)."],
+            }
+        except subprocess.CalledProcessError as exc:
+            return {
+                "provider": self.name,
+                "status": "failed",
+                "message": exc.stderr or str(exc),
+                "generated_commands": commands,
+                "raw_output": {
+                    "stdout": exc.stdout,
+                    "stderr": exc.stderr,
+                },
+                "logs": [exc.stderr or str(exc)],
+                "endpoints": [],
+                "service_endpoints": [],
+            }
+
+    def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        endpoints = result.get("service_endpoints") or result.get("endpoints") or []
+        urls = [endpoint["url"] for endpoint in endpoints if endpoint.get("url")]
+
+        if result.get("status") != "deployed" or not urls:
+            return {
+                "status": "skipped",
+                "passed": None,
+                "message": "Health check skipped because no public deployment endpoint is available.",
+            }
+
+        try:
+            import requests
+        except ImportError:
+            return {
+                "status": "skipped",
+                "passed": None,
+                "message": "Health check skipped because the requests package is not installed.",
+            }
+
+        last_error = None
+        for _ in range(3):
+            try:
+                responses = [requests.get(url, timeout=5) for url in urls]
+                if all(response.status_code < 400 for response in responses):
+                    return {
+                        "status": "passed",
+                        "passed": True,
+                        "message": "All public endpoints responded successfully.",
+                    }
+                last_error = "One or more endpoints returned HTTP 400 or higher."
+            except requests.RequestException as exc:
+                last_error = str(exc)
+            time.sleep(3)
+
         return {
-            "provider": self.name,
-            "status": "not_implemented",
-            "message": "Azure deployment is not implemented; this provider is available for decision evaluation only.",
-            "logs": ["Azure mock provider does not execute deployments."],
-            "service_endpoints": [],
+            "status": "failed",
+            "passed": False,
+            "message": last_error or "Timed out waiting for public endpoints to respond.",
         }
+
+    def _missing_config(self):
+        required = {
+            "AZURE_RESOURCE_GROUP": self.resource_group,
+            "AZURE_CONTAINERAPP_ENV": self.containerapp_env,
+            "AZURE_LOCATION": self.location,
+        }
+        return [name for name, value in required.items() if not value]
 
 
 def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:

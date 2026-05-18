@@ -406,6 +406,16 @@
             {% if deployment.message %}
                 <p>{{ deployment.message }}</p>
             {% endif %}
+            {% if deployment.missing_vars %}
+                <div class="notice">
+                    <strong>Configuration errors</strong>
+                    <ul>
+                        {% for variable in deployment.missing_vars %}
+                            <li>{{ variable }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
 
             {% if result.deployment_steps %}
                 <ul>

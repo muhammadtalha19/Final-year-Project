@@ -179,6 +179,30 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
         add_deployment_record(result)
         return result
 
+    if execution_provider == "GCP":
+        provider = _provider_instance(execution_provider)
+        plan = provider.generate_plan(validated)
+        deployment = {
+            **plan,
+            "status": "blocked_by_safety_flag",
+            "deployment_mode": "real",
+            "message": "Real GCP deployment is not implemented in this project yet. No gcloud command was executed.",
+        }
+        result.update(
+            {
+                "status": "blocked_by_safety_flag",
+                "deployment_mode": "real",
+                "deployment": deployment,
+                "generated_commands": plan.get("generated_commands", []),
+                "health_check": _skipped_health("Health check skipped because real GCP deployment is not implemented."),
+            }
+        )
+        result["deployment_steps"].append(f"Execution provider: {execution_provider}")
+        result["deployment_steps"].append(deployment["message"])
+        result["logs"] = list(result["deployment_steps"])
+        add_deployment_record(result)
+        return result
+
     if not execute:
         result.update(
             {
@@ -259,7 +283,7 @@ def _real_deployment_enabled() -> bool:
 
 
 def _provider_deployment_allowed(provider_name: str) -> bool:
-    return _env_bool(f"ALLOW_{provider_name}_DEPLOYMENT")
+    return _env_bool(f"ALLOW_{provider_name.upper()}_DEPLOYMENT")
 
 
 def _env_bool(name: str) -> bool:

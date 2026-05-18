@@ -6,7 +6,7 @@ Final Year Project: YAML-Based Multi-Cloud Orchestrator for Automated Container 
 
 This project lets a non-DevOps user upload a YAML file that describes an application, container image, resource needs, cost limits, uptime requirements, region preference, and access requirements. The Flask dashboard validates the YAML, evaluates cloud providers, selects the most suitable provider, optionally deploys through an implemented backend, and returns status, endpoint, health-check output, logs/messages, and decision reasoning.
 
-This project evaluates AWS, GCP, and Azure using a provider catalog. The current real execution backend supports AWS EC2 Docker deployment. GCP and Azure are included in the decision layer as mock providers to demonstrate multi-cloud extensibility.
+This project evaluates AWS, GCP, and Azure using a provider catalog. The current real execution backends support AWS EC2 Docker deployment and Azure Container Apps deployment behind safety flags. GCP remains dry-run only for now.
 
 ## Problem Statement
 
@@ -69,8 +69,8 @@ DEPLOYMENT_TIMEOUT_SECONDS=180
 ENABLE_LIVE_PRICING=false
 ENABLE_REAL_DEPLOYMENT=false
 ALLOW_AWS_DEPLOYMENT=false
-ALLOW_GCP_DEPLOYMENT=false
 ALLOW_AZURE_DEPLOYMENT=false
+ALLOW_GCP_DEPLOYMENT=false
 GCP_REGION=asia-south1
 GCP_PLATFORM=managed
 AZURE_RESOURCE_GROUP=
@@ -79,6 +79,8 @@ AZURE_CONTAINERAPP_ENV=
 ```
 
 Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
+
+Required for real Azure Container Apps deployment: `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, and `AZURE_CONTAINERAPP_ENV`.
 
 ## YAML Schema Examples
 
@@ -190,13 +192,40 @@ ENABLE_REAL_DEPLOYMENT=false
 
 In dry-run mode, the orchestrator uses the selected provider directly and generates a safe provider-specific deployment plan without executing cloud commands. AWS shows an EC2 Docker plan, GCP shows a Cloud Run `gcloud run deploy` command, and Azure shows an Azure Container Apps `az containerapp create` command. No EC2 instance is launched, and no `gcloud` or `az` command is executed.
 
-To attempt real deployment, `ENABLE_REAL_DEPLOYMENT=true` must be set and the selected provider must also have its allow flag enabled, such as `ALLOW_AWS_DEPLOYMENT=true`. GCP and Azure real execution are still not implemented; their provider classes only return clear not-implemented responses.
+To attempt real deployment, `ENABLE_REAL_DEPLOYMENT=true` must be set and the selected provider must also have its allow flag enabled, such as `ALLOW_AWS_DEPLOYMENT=true` or `ALLOW_AZURE_DEPLOYMENT=true`. GCP real execution is still not implemented; it remains dry-run or blocked.
+
+## Real AWS and Azure Deployment
+
+Real deployment is disabled by default and should only be enabled in a controlled demo account:
+
+```text
+ENABLE_REAL_DEPLOYMENT=true
+ALLOW_AWS_DEPLOYMENT=true
+# or
+ALLOW_AZURE_DEPLOYMENT=true
+```
+
+AWS real deployment uses EC2 plus Docker. The provider launches an EC2 instance with `boto3`, installs Docker through user data, pulls the configured image, and runs the container with `PORT:PORT` mapping.
+
+Azure real deployment uses Azure Container Apps through the Azure CLI. The provider runs `az containerapp create` with an argument list and captures the returned FQDN.
+
+GCP remains dry-run only for now; no real `gcloud` deployment is performed.
+
+Before using real execution, configure the provider CLI/account locally:
+
+```bash
+aws configure
+az login
+az extension add --name containerapp --upgrade
+```
+
+Monitor free-tier usage and billing carefully, and clean up EC2 instances, Container Apps, resource groups, and related networking resources after demos.
 
 ## AWS Deployment
 
 AWS deployment uses `boto3` to launch an EC2 instance and passes Docker setup commands through EC2 user data. For multi-service YAML files, the AWS provider generates one `docker run` command per service. It returns the instance ID, public IP, public service endpoints, status, and a message.
 
-The orchestrator never pretends that GCP or Azure deployment exists. If GCP or Azure is selected but AWS is also eligible, AWS may be used as the execution provider for the current backend. If AWS is not eligible, deployment stops before execution.
+The orchestrator never falls back to AWS when Azure or GCP is selected. In dry-run mode it generates the selected provider's plan. In real mode it executes only the selected provider when the matching allow flag is true.
 
 ## Tests
 
@@ -210,8 +239,8 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 
 - AWS and GCP pricing currently use static fallback estimates.
 - Azure live pricing is an MVP estimate and may not match exact deployment cost.
-- Real deployment is implemented only for AWS EC2 Docker.
-- GCP and Azure are mock providers for decision-layer extensibility.
+- Real deployment is implemented for AWS EC2 Docker and Azure Container Apps only.
+- GCP remains dry-run only.
 - Dry-run commands are generated for demonstration and review; they are not executed by the dashboard.
 - EC2 networking, security group rules, IAM permissions, and image availability must be configured manually.
 - Health checks depend on the public endpoint becoming reachable within `DEPLOYMENT_TIMEOUT_SECONDS`.

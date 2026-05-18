@@ -90,8 +90,11 @@ class AWSProvider(CloudProvider):
             return {
                 "provider": self.name,
                 "status": "configuration_error",
+                "missing_vars": missing,
                 "message": "Missing AWS environment variables: " + ", ".join(missing),
                 "logs": [],
+                "generated_commands": [],
+                "endpoints": [],
                 "service_endpoints": [],
             }
 
@@ -102,11 +105,14 @@ class AWSProvider(CloudProvider):
                 "status": "validation_error",
                 "message": "No services were found to deploy.",
                 "logs": [],
+                "generated_commands": [],
+                "endpoints": [],
                 "service_endpoints": [],
             }
 
         app_name = config["app"]["name"]
         user_data = self._build_user_data(services)
+        generated_commands = self.generate_plan(config).get("generated_commands", [])
 
         try:
             ec2 = self._client()
@@ -143,7 +149,14 @@ class AWSProvider(CloudProvider):
                 "status": "deployed",
                 "instance_id": instance_id,
                 "public_ip": public_ip,
+                "endpoints": endpoints,
                 "service_endpoints": endpoints,
+                "generated_commands": generated_commands,
+                "user_data_summary": [
+                    "Install Docker",
+                    "Start and enable Docker",
+                    f"Pull and run {len(services)} container image(s)",
+                ],
                 "message": "EC2 instance launched and Docker containers requested through user data.",
                 "logs": [
                     f"EC2 instance launched: {instance_id}",
@@ -156,6 +169,8 @@ class AWSProvider(CloudProvider):
                 "status": "failed",
                 "message": str(exc),
                 "logs": [str(exc)],
+                "generated_commands": generated_commands,
+                "endpoints": [],
                 "service_endpoints": [],
             }
 
