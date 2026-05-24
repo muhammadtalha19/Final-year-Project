@@ -223,6 +223,17 @@
             white-space: pre-wrap;
         }
 
+        .delete-form {
+            display: inline-flex;
+        }
+
+        .delete-button {
+            border-color: var(--danger);
+            background: white;
+            color: var(--danger);
+            padding: 7px 11px;
+        }
+
         @media (max-width: 700px) {
             header {
                 display: block;
@@ -462,6 +473,15 @@
 
         <section class="panel">
             <h2>Deployment History</h2>
+            {% if delete_result %}
+                <div class="notice">
+                    <strong>Cleanup result:</strong>
+                    <span class="status {% if delete_result.status == 'deleted' %}success{% elif delete_result.status == 'delete_failed' %}danger{% else %}warning{% endif %}">
+                        {{ delete_result.status|replace("_", " ") }}
+                    </span>
+                    <p>{{ delete_result.message }}</p>
+                </div>
+            {% endif %}
             {% if history %}
                 <table>
                     <thead>
@@ -472,6 +492,7 @@
                         <th>Execution</th>
                         <th>Status</th>
                         <th>Endpoints</th>
+                        <th>Action</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -487,6 +508,15 @@
                                     {% for endpoint in record.public_endpoints %}
                                         <a href="{{ endpoint.url }}" target="_blank" rel="noreferrer">{{ endpoint.url }}</a>{% if not loop.last %}<br>{% endif %}
                                     {% endfor %}
+                                {% else %}
+                                    None
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if record.id and record.deployment_mode == "real" and record.execution_provider in ["AWS", "Azure"] and record.status in ["deployed", "delete_failed"] %}
+                                    <form class="delete-form" method="POST" action="/deployments/{{ record.id }}/delete">
+                                        <button class="delete-button" type="submit">Delete</button>
+                                    </form>
                                 {% else %}
                                     None
                                 {% endif %}

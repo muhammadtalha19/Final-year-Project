@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover - dependency is installed in the project
         return None
 
 from deployment_history import load_deployment_history
-from orchestrator import deploy_app
+from orchestrator import delete_deployment, deploy_app
 
 load_dotenv()
 
@@ -71,6 +71,12 @@ def deploy():
 @app.route("/history", methods=["GET"])
 def history():
     return render_template("index.html", history=load_deployment_history(), show_history=True)
+
+
+@app.route("/deployments/<deployment_id>/delete", methods=["POST"])
+def delete_saved_deployment(deployment_id):
+    delete_result = delete_deployment(deployment_id)
+    return render_template("index.html", delete_result=delete_result, history=load_deployment_history(), show_history=True)
 
 
 # ya api route ha configurantion management ky liye (API ROUTES (Config Management)).

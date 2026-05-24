@@ -221,6 +221,12 @@ az extension add --name containerapp --upgrade
 
 Monitor free-tier usage and billing carefully, and clean up EC2 instances, Container Apps, resource groups, and related networking resources after demos.
 
+## Cleanup/Delete
+
+Cleanup is available only for stored real AWS or Azure deployments. AWS cleanup terminates the recorded EC2 instance. Azure cleanup deletes the recorded Container App through the Azure CLI. Dry-run records do not create cloud resources and do not need deletion; GCP cleanup is not implemented because GCP remains dry-run only.
+
+After using cleanup, verify the result in the AWS or Azure console and confirm that associated billable resources no longer remain.
+
 ## AWS Deployment
 
 AWS deployment uses `boto3` to launch an EC2 instance and passes Docker setup commands through EC2 user data. For multi-service YAML files, the AWS provider generates one `docker run` command per service. It returns the instance ID, public IP, public service endpoints, status, and a message.

@@ -69,6 +69,13 @@ class GCPMockProvider(CloudProvider):
             "service_endpoints": [],
         }
 
+    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "provider": self.name,
+            "status": "delete_skipped",
+            "message": "GCP cleanup is not implemented because GCP real deployment is not implemented.",
+        }
+
 
 def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:
     services = get_service_definitions(config)

@@ -174,6 +174,45 @@ class AWSProvider(CloudProvider):
                 "service_endpoints": [],
             }
 
+    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        instance_id = deployment_record.get("instance_id")
+        if not instance_id:
+            deployment = deployment_record.get("deployment", {})
+            instance_id = deployment.get("instance_id") if isinstance(deployment, dict) else None
+
+        if not instance_id:
+            return {
+                "provider": self.name,
+                "status": "delete_skipped",
+                "instance_id": None,
+                "message": "AWS cleanup skipped because the deployment record does not contain an instance ID.",
+            }
+
+        if not self.region:
+            return {
+                "provider": self.name,
+                "status": "delete_failed",
+                "instance_id": instance_id,
+                "message": "AWS cleanup failed because AWS_REGION is not configured.",
+            }
+
+        try:
+            ec2 = self._client()
+            ec2.terminate_instances(InstanceIds=[instance_id])
+            return {
+                "provider": self.name,
+                "status": "deleted",
+                "instance_id": instance_id,
+                "message": f"AWS EC2 termination requested for instance {instance_id}.",
+            }
+        except Exception as exc:  # pragma: no cover - real cloud failures are environment dependent.
+            return {
+                "provider": self.name,
+                "status": "delete_failed",
+                "instance_id": instance_id,
+                "message": str(exc),
+            }
+
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
         endpoints = result.get("service_endpoints") or []
         urls = [endpoint["url"] for endpoint in endpoints if endpoint.get("url")]

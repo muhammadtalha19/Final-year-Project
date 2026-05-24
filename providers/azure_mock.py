@@ -26,12 +26,13 @@ class AzureMockProvider(CloudProvider):
 
         for service in get_service_definitions(config):
             ingress = "external" if _is_public(config, service) else "internal"
+            resource_name = _service_name(config, service)
             command = [
                 "az",
                 "containerapp",
                 "create",
                 "--name",
-                _service_name(config, service),
+                resource_name,
                 "--resource-group",
                 self.resource_group or "<AZURE_RESOURCE_GROUP>",
                 "--environment",
@@ -50,6 +51,7 @@ class AzureMockProvider(CloudProvider):
             commands.append(
                 {
                     "service": service["name"],
+                    "resource_name": resource_name,
                     "command": command,
                     "command_string": shlex.join(command),
                 }
@@ -119,6 +121,7 @@ class AzureMockProvider(CloudProvider):
                 "provider": self.name,
                 "status": "deployed",
                 "fqdn": endpoints[0]["fqdn"] if endpoints else None,
+                "app_names": [command["resource_name"] for command in commands],
                 "endpoints": endpoints,
                 "service_endpoints": endpoints,
                 "generated_commands": commands,
@@ -139,6 +142,66 @@ class AzureMockProvider(CloudProvider):
                 "logs": [exc.stderr or str(exc)],
                 "endpoints": [],
                 "service_endpoints": [],
+            }
+
+    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        app_names = deployment_record.get("app_names") or []
+        if not app_names:
+            deployment = deployment_record.get("deployment", {})
+            if isinstance(deployment, dict):
+                app_names = deployment.get("app_names") or []
+        if not app_names and deployment_record.get("app_name"):
+            app_names = [_safe_name(deployment_record["app_name"])]
+
+        if not app_names:
+            return {
+                "provider": self.name,
+                "status": "delete_skipped",
+                "app_name": None,
+                "message": "Azure cleanup skipped because the deployment record does not contain an app name.",
+            }
+
+        if not self.resource_group:
+            return {
+                "provider": self.name,
+                "status": "delete_failed",
+                "app_name": app_names[0],
+                "message": "Azure cleanup failed because AZURE_RESOURCE_GROUP is not configured.",
+            }
+
+        commands = [
+            [
+                "az",
+                "containerapp",
+                "delete",
+                "--name",
+                app_name,
+                "--resource-group",
+                self.resource_group,
+                "--yes",
+            ]
+            for app_name in app_names
+        ]
+
+        try:
+            for command in commands:
+                subprocess.run(command, capture_output=True, text=True, check=True)
+            return {
+                "provider": self.name,
+                "status": "deleted",
+                "app_name": app_names[0],
+                "app_names": app_names,
+                "generated_commands": commands,
+                "message": f"Azure Container App deletion completed for {', '.join(app_names)}.",
+            }
+        except subprocess.CalledProcessError as exc:
+            return {
+                "provider": self.name,
+                "status": "delete_failed",
+                "app_name": app_names[0],
+                "app_names": app_names,
+                "generated_commands": commands,
+                "message": exc.stderr or str(exc),
             }
 
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:

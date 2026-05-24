@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 from config_schema import ConfigValidationError, validate_config
 from decision_engine import select_provider
-from deployment_history import add_deployment_record
+from deployment_history import add_deployment_record, get_deployment_record, update_deployment_record
 from pricing.models import PriceEstimate
 from pricing.pricing_service import get_price_estimates
 from providers.aws_provider import AWSProvider
@@ -245,6 +245,43 @@ def deploy_app(config: Dict[str, Any], execute: bool = True) -> Dict[str, Any]:
     result["logs"] = list(result["deployment_steps"])
     add_deployment_record(result)
     return result
+
+
+def delete_deployment(deployment_id: str) -> Dict[str, Any]:
+    record = get_deployment_record(deployment_id)
+    if not record:
+        return {
+            "provider": None,
+            "status": "delete_skipped",
+            "message": "Cleanup skipped because the deployment record was not found.",
+        }
+
+    execution_provider = record.get("execution_provider")
+    status = record.get("status")
+
+    if status not in {"deployed", "delete_failed"}:
+        delete_result = {
+            "provider": execution_provider,
+            "status": "delete_skipped",
+            "message": "Cleanup skipped because this record is not an active real deployment.",
+        }
+    elif execution_provider not in {"AWS", "Azure"}:
+        delete_result = {
+            "provider": execution_provider,
+            "status": "delete_skipped",
+            "message": "Cleanup skipped because real GCP cleanup is not implemented.",
+        }
+    else:
+        delete_result = _provider_instance(execution_provider).delete(record)
+
+    update_deployment_record(
+        deployment_id,
+        {
+            "status": delete_result["status"],
+            "cleanup_result": delete_result,
+        },
+    )
+    return delete_result
 
 
 def _provider_instance(provider_name: str):
