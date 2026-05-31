@@ -1,6 +1,7 @@
 from io import BytesIO
 
 import app as app_module
+from portal_models import DeploymentRecord, User, db
 
 
 YAML_WITH_MANUAL_AZURE = b"""
@@ -49,10 +50,20 @@ def _post_deploy(client, yaml_bytes, cloud_selection):
     )
 
 
+def _login(client, email="ui@example.com"):
+    return client.post(
+        "/register",
+        data={"name": "UI Tester", "email": email, "password": "secret123"},
+        follow_redirects=True,
+    )
+
+
 def _fake_result(selection):
     return {
         "app": "ui-selection-test",
         "environment": "production",
+        "app_type": "api",
+        "image": "nginx",
         "status": "dry_run",
         "deployment_mode": "dry_run",
         "validation_errors": [],
@@ -82,9 +93,10 @@ def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
         return _fake_result(config["selection"])
 
     monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "yaml")
+    response = _post_deploy(client, YAML_WITH_MANUAL_AZURE, "yaml")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "Azure"}
@@ -93,9 +105,10 @@ def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
 def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "auto")
+    response = _post_deploy(client, YAML_WITH_MANUAL_AZURE, "auto")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "auto"}
@@ -104,9 +117,10 @@ def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
 def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "AWS")
+    response = _post_deploy(client, YAML_WITHOUT_SELECTION, "AWS")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "AWS"}
@@ -115,9 +129,10 @@ def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
 def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "Azure")
+    response = _post_deploy(client, YAML_WITHOUT_SELECTION, "Azure")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "Azure"}
@@ -126,9 +141,10 @@ def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
 def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "GCP")
+    response = _post_deploy(client, YAML_WITHOUT_SELECTION, "GCP")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "GCP"}
@@ -137,9 +153,10 @@ def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
 def test_existing_yaml_manual_selection_still_works_with_yaml_option(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "yaml")
+    response = _post_deploy(client, YAML_WITH_MANUAL_AZURE, "yaml")
 
     assert response.status_code == 200
     assert captured[0]["selection"]["mode"] == "manual"
@@ -154,15 +171,21 @@ def test_confirm_real_deployment_route_uses_posted_config_payload(monkeypatch):
         return _fake_result(config["selection"])
 
     monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
-    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    _login(client)
+    with app_module.app.app_context():
+        user = User.query.filter_by(email="ui@example.com").first()
+        record = DeploymentRecord(
+            user_id=user.id,
+            yaml_content=YAML_WITH_MANUAL_AZURE.decode("utf-8"),
+            result_json=_fake_result({"mode": "manual", "provider": "Azure"}),
+        )
+        record.apply_result(record.result_json, yaml_content=record.yaml_content)
+        db.session.add(record)
+        db.session.commit()
+        deployment_id = record.id
 
-    response = app_module.app.test_client().post(
-        "/deploy",
-        data={
-            "confirm_real_deployment": "true",
-            "config_yaml": YAML_WITH_MANUAL_AZURE.decode("utf-8"),
-        },
-    )
+    response = client.post(f"/deployments/{deployment_id}/confirm")
 
     assert response.status_code == 200
     assert captured[0][0]["selection"] == {"mode": "manual", "provider": "Azure"}

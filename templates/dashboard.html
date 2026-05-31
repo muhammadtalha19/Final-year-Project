@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Welcome, {{ current_user.name }}</h2>
+    <div class="meta">
+        <div><span class="label">Total Deployments</span>{{ counts.total }}</div>
+        <div><span class="label">Deployed</span>{{ counts.deployed }}</div>
+        <div><span class="label">Failed / Blocked</span>{{ counts.failed }}</div>
+        <div><span class="label">Dry Runs</span>{{ counts.dry_run }}</div>
+    </div>
+    <div class="action-list">
+        <a class="button" href="/deploy/new">New Deployment</a>
+        <a class="button secondary" href="/deployments">View History</a>
+        <a class="button secondary" href="/providers">Provider Readiness</a>
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Provider Readiness Summary</h2>
+    <p class="empty">Cloud credentials are configured by the administrator/server environment.</p>
+    <div class="meta">
+        {% for item in readiness %}
+            <div>
+                <span class="label">{{ item.provider }}</span>
+                <span class="status {% if item.readiness.ready %}success{% else %}warning{% endif %}">
+                    {{ "ready" if item.readiness.ready else "needs setup" }}
+                </span>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Latest Deployments</h2>
+    {% if latest %}
+        {% include "_deployment_table.html" with context %}
+    {% else %}
+        <p class="empty">No deployments yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Provider Readiness{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Provider Readiness</h2>
+    <div class="notice">
+        <strong>Model A</strong>
+        <p>Cloud credentials are configured by the administrator/server environment. User cloud secrets are not collected or displayed.</p>
+    </div>
+</section>
+
+{% for item in readiness %}
+    {% set readiness_result = item.readiness %}
+    {% set bootstrap = item.bootstrap_plan or {} %}
+    <section class="panel">
+        <h2>{{ item.provider }}</h2>
+        <div class="meta">
+            <div><span class="label">Ready</span>{{ "Yes" if readiness_result.ready else "No" }}</div>
+            <div><span class="label">Missing</span>{{ readiness_result.missing|join(", ") if readiness_result.missing else "None" }}</div>
+        </div>
+        {% if readiness_result.warnings %}
+            <div class="notice">
+                <ul>
+                    {% for warning in readiness_result.warnings %}
+                        <li>{{ warning }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+        <table>
+            <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+            <tbody>
+            {% for check in readiness_result.checks %}
+                <tr>
+                    <td>{{ check.name }}</td>
+                    <td><span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">{{ check.status }}</span></td>
+                    <td>{{ check.message }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if bootstrap.commands %}
+            <h3>Bootstrap Suggestions</h3>
+            <p class="empty">{{ bootstrap.message }}</p>
+            {% if bootstrap.missing_resources %}
+                <p><strong>Likely missing:</strong> {{ bootstrap.missing_resources|join(", ") }}</p>
+            {% endif %}
+            {% for command in bootstrap.commands %}
+                <pre>{{ command }}</pre>
+            {% endfor %}
+        {% endif %}
+    </section>
+{% endfor %}
+{% endblock %}

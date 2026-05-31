@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Deployments{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Deployment History</h2>
+    {% if deployments %}
+        {% include "_deployment_table.html" %}
+    {% else %}
+        <p class="empty">No deployments yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

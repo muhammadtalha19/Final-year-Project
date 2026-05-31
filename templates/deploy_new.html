@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}New Deployment{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Upload YAML</h2>
+    <p class="empty">Cloud credentials are server-side only. Users upload YAML and choose selection mode; they never enter cloud secrets.</p>
+    {% if errors %}
+        <div class="notice danger-note">
+            <ul>
+                {% for error in errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+    <form method="POST" action="/deploy/new" enctype="multipart/form-data">
+        <input type="file" name="config_file" accept=".yaml,.yml" required>
+        <label>
+            <span class="label">Cloud Selection</span>
+            <select name="cloud_selection">
+                <option value="yaml" selected>Use YAML selection</option>
+                <option value="auto">Auto select best provider</option>
+                <option value="AWS">AWS</option>
+                <option value="Azure">Azure</option>
+                <option value="GCP">GCP</option>
+            </select>
+        </label>
+        <button type="submit">Run Orchestrator</button>
+    </form>
+</section>
+{% endblock %}

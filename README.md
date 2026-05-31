@@ -4,9 +4,15 @@ Final Year Project: YAML-Based Multi-Cloud Orchestrator for Automated Container 
 
 ## Project Overview
 
-This project lets a non-DevOps user upload a YAML file that describes an application, container image, resource needs, cost limits, uptime requirements, region preference, and access requirements. The Flask dashboard validates the YAML, evaluates cloud providers, selects the most suitable provider, optionally deploys through an implemented backend, and returns status, endpoint, health-check output, logs/messages, and decision reasoning.
+This project lets a non-DevOps user register/login, upload a YAML file that describes an application, container image, resource needs, cost limits, uptime requirements, region preference, and access requirements. The Flask portal validates the YAML, evaluates cloud providers, selects the most suitable provider, optionally deploys through an implemented backend, and returns status, endpoint, health-check output, logs/messages, and decision reasoning.
 
 This project evaluates AWS, GCP, and Azure using a provider catalog. The current real execution backends support AWS EC2 Docker, Azure Container Apps, and GCP Cloud Run behind safety flags and an approval gate.
+
+## Model A: Admin-Controlled Cloud Deployment
+
+This portal uses Model A. Users manage their own YAML submissions and deployment records, but all cloud execution uses server/admin cloud credentials configured in `.env` or the server environment.
+
+Users must not enter AWS, Azure, or GCP secrets into the UI. Cloud credentials remain server-side, and deployment history is scoped by authenticated user.
 
 ## Problem Statement
 
@@ -19,10 +25,16 @@ A structured YAML input combined with rule-based provider filtering and scoring 
 ## Architecture
 
 ```text
+User Login/Register
+      |
+      v
+Authenticated Portal
+      |
+      v
 User YAML Upload
       |
       v
-Flask Dashboard (app.py)
+Flask Portal (app.py)
       |
       v
 YAML Validation (config_schema.py)
@@ -38,10 +50,11 @@ Decision Engine (decision_engine.py)
 Orchestrator (orchestrator.py)
       |
       +--> Health Check
-      +--> Deployment History (deployment_history.py)
+      +--> SQLite User Deployment Records
+      +--> Legacy JSON History Compatibility (deployment_history.py)
       |
       v
-Dashboard Result
+Portal Result / Detail / Report
 ```
 
 ## Setup
@@ -53,7 +66,13 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in AWS values in `.env` only when you intend to run the real AWS backend. Do not commit `.env`, `.pem`, logs, caches, or virtual environments.
+The development SQLite database is created automatically under `instance/orchestrator.db` when the app starts. You can also initialize it from Python:
+
+```bash
+python -c "from app import init_database; init_database()"
+```
+
+Fill cloud values in `.env` only when you intend to test real provider backends in a controlled account. Do not commit `.env`, `.pem`, SQLite databases, logs, caches, or virtual environments.
 
 ## Environment Variables
 
@@ -86,6 +105,26 @@ Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`
 Required for real Azure Container Apps deployment: `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, and `AZURE_CONTAINERAPP_ENV`.
 
 Required for real GCP Cloud Run deployment: `GCP_PROJECT_ID`, `GCP_REGION`, and `GCP_PLATFORM`.
+
+## Portal Pages and Auth Routes
+
+Public routes:
+
+- `/` landing page
+- `/register`
+- `/login`
+
+Authenticated routes:
+
+- `/dashboard`
+- `/deploy/new`
+- `/deployments`
+- `/deployments/<id>`
+- `/deployment-report/<id>`
+- `/providers`
+- `/logout`
+
+Authentication uses Flask-Login sessions and Werkzeug password hashing. Passwords are never stored as plaintext.
 
 ## YAML Schema Examples
 
@@ -173,7 +212,17 @@ Real deployment is still controlled only by `.env` safety flags such as `ENABLE_
 flask run
 ```
 
-Open the Flask URL, upload one of the files in `examples/`, and review the selected provider, execution provider, scoring table, deployment status, endpoint, and health-check result.
+Open the Flask URL, register a user, upload one of the files in `examples/`, and review the selected provider, execution provider, scoring table, deployment status, endpoint, and health-check result.
+
+## Deployment Flow
+
+1. User logs in.
+2. User uploads YAML from `/deploy/new`.
+3. The UI cloud selector can preserve YAML selection, auto-select, or force manual AWS/Azure/GCP selection.
+4. The orchestrator validates YAML, checks image input, checks provider readiness, evaluates pricing and reliability constraints, and generates a dry-run plan by default.
+5. If real deployment is enabled by `.env`, the selected provider allow flag must also be true, readiness must pass, image validation must pass, and the user must confirm the approval step with POST.
+6. The deployment record is stored in SQLite and is visible only to the owner.
+7. The owner can view details, download a report, and delete real deployments created by the orchestrator.
 
 ## Decision Engine
 
@@ -268,6 +317,8 @@ Cleanup is available only for stored real AWS, Azure, or GCP deployments. AWS cl
 
 After using cleanup, verify the result in the AWS or Azure console and confirm that associated billable resources no longer remain.
 
+Cleanup, detail pages, and reports are owner-scoped. A logged-in user cannot view or delete another user's deployment record.
+
 ## AWS Deployment
 
 AWS deployment uses `boto3` to launch an EC2 instance and passes Docker setup commands through EC2 user data. For multi-service YAML files, the AWS provider generates one `docker run` command per service. It returns the instance ID, public IP, public service endpoints, status, and a message.
@@ -305,6 +356,6 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 
 - Add richer deployment backends such as GCP Compute Engine, Azure VM, or Kubernetes.
 - Replace static provider data with live pricing and region availability.
-- Add authentication for dashboard access.
+- Add user-owned cloud account workflows, OAuth, or per-user cloud credentials as a separate architecture model.
 - Add richer deployment logs and rollback handling.
-- Store history in SQLite for stronger querying and reporting.
+- Add admin views for audit, quota management, and classroom/demo supervision.

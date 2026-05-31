@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Login</h2>
+    {% if error %}
+        <div class="notice danger-note">{{ error }}</div>
+    {% endif %}
+    <form class="stack-form" method="POST" action="/login">
+        <label>
+            <span class="label">Email</span>
+            <input type="email" name="email" value="{{ email or '' }}" required>
+        </label>
+        <label>
+            <span class="label">Password</span>
+            <input type="password" name="password" required>
+        </label>
+        <button type="submit">Login</button>
+    </form>
+</section>
+{% endblock %}

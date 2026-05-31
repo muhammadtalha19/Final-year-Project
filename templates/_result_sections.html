@@ -1,0 +1,189 @@
+{% set state = result.status or "unknown" %}
+{% set decision = result.decision or {} %}
+{% set deployment = result.deployment or {} %}
+{% set health = result.health_check or {} %}
+{% set public_url = result.public_endpoints[0].url if result.public_endpoints else "N/A" %}
+
+<section class="panel">
+    <h2>Summary</h2>
+    <div class="meta">
+        <div><span class="label">Application</span>{{ result.app or "N/A" }}</div>
+        <div><span class="label">App Type</span>{{ result.app_type or "api" }}</div>
+        <div><span class="label">Selected Provider</span>{{ decision.selected_provider or "None" }}</div>
+        <div><span class="label">Execution Provider</span>{{ decision.execution_provider or "None" }}</div>
+        <div><span class="label">Deployment Mode</span>{{ result.deployment_mode or "N/A" }}</div>
+        <div>
+            <span class="label">Status</span>
+            <span class="status {% if state in ['deployed', 'deleted'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked', 'provider_not_ready', 'image_validation_failed', 'delete_failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag', 'approval_required', 'delete_skipped'] %}warning{% endif %}">
+                {{ state|replace("_", " ") }}
+            </span>
+        </div>
+        <div>
+            <span class="label">Public URL</span>
+            {% if result.public_endpoints %}<a href="{{ public_url }}" target="_blank" rel="noreferrer">{{ public_url }}</a>{% else %}N/A{% endif %}
+        </div>
+        <div><span class="label">Health</span>{{ health.result or health.status or "N/A" }}</div>
+    </div>
+</section>
+
+{% if result.validation_errors %}
+<section class="panel">
+    <h2>Validation Errors</h2>
+    <ul>{% for error in result.validation_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% set image_validation = result.docker_image_validation or {} %}
+{% if image_validation.checks %}
+<section class="panel">
+    <h2>Docker Image Validation</h2>
+    <div class="meta">
+        <div><span class="label">Check Type</span>{{ image_validation.check_type or "syntax_only" }}</div>
+        <div><span class="label">Valid</span>{{ "Yes" if image_validation.valid else "No" }}</div>
+    </div>
+    {% if image_validation.errors %}
+        <div class="notice danger-note"><ul>{% for error in image_validation.errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
+    {% endif %}
+    {% if image_validation.warnings %}
+        <div class="notice"><ul>{% for warning in image_validation.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+    {% endif %}
+</section>
+{% endif %}
+
+{% set readiness = result.provider_readiness or {} %}
+{% if readiness.checks %}
+<section class="panel">
+    <h2>Provider Readiness</h2>
+    <div class="meta">
+        <div><span class="label">Provider</span>{{ readiness.provider or "N/A" }}</div>
+        <div><span class="label">Ready</span>{{ "Yes" if readiness.ready else "No" }}</div>
+        <div><span class="label">Missing</span>{{ readiness.missing|join(", ") if readiness.missing else "None" }}</div>
+    </div>
+    <table>
+        <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody>
+        {% for check in readiness.checks %}
+            <tr>
+                <td>{{ check.name }}</td>
+                <td><span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">{{ check.status }}</span></td>
+                <td>{{ check.message }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% set bootstrap = result.bootstrap_plan or {} %}
+{% if bootstrap.commands %}
+<section class="panel">
+    <h2>Bootstrap Suggestions</h2>
+    <p>{{ bootstrap.message }}</p>
+    {% for command in bootstrap.commands %}<pre>{{ command }}</pre>{% endfor %}
+</section>
+{% endif %}
+
+{% set approval = result.approval or {} %}
+{% if approval.required %}
+<section class="panel">
+    <h2>Approval</h2>
+    <div class="notice">
+        <strong>Real deployment approval required</strong>
+        <p>{{ approval.warning }}</p>
+        <form method="POST" action="/deployments/{{ record.id }}/confirm">
+            <button type="submit">Confirm Real Deployment</button>
+        </form>
+    </div>
+</section>
+{% endif %}
+
+{% if decision.evaluated_providers %}
+<section class="panel">
+    <h2>Provider Evaluation</h2>
+    <p>{{ decision.reason }}</p>
+    <table>
+        <thead>
+        <tr><th>Provider</th><th>Eligible</th><th>Cost</th><th>Pricing</th><th>Uptime</th><th>Score</th><th>Rejection Reasons</th></tr>
+        </thead>
+        <tbody>
+        {% for provider in decision.evaluated_providers %}
+            <tr>
+                <td>{{ provider.provider }}</td>
+                <td>{{ "yes" if provider.eligible else "no" }}</td>
+                <td>${{ provider.estimated_cost_usd }}/mo</td>
+                <td>{{ provider.pricing_type or "N/A" }} / {{ provider.pricing_source or "N/A" }}</td>
+                <td>{{ provider.uptime_percent }}%</td>
+                <td>{{ provider.score }}</td>
+                <td>{{ provider.rejection_reasons|join("; ") if provider.rejection_reasons else "None" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+<section class="panel">
+    <h2>Deployment Status</h2>
+    <div class="meta">
+        <div><span class="label">Provider</span>{{ deployment.provider or decision.execution_provider or "N/A" }}</div>
+        <div><span class="label">Status</span>{{ deployment.status or result.status or "N/A" }}</div>
+        <div><span class="label">Instance ID</span>{{ deployment.instance_id or "N/A" }}</div>
+        <div><span class="label">Endpoint</span>{{ public_url }}</div>
+    </div>
+    {% if deployment.message %}<p>{{ deployment.message }}</p>{% endif %}
+</section>
+
+{% set commands = result.generated_commands or deployment.generated_commands %}
+{% if commands %}
+<section class="panel">
+    <h2>Generated Commands</h2>
+    {% for command in commands %}
+        <p><strong>{{ command.service or command.label or "service" }}</strong></p>
+        <pre>{{ command.command_string or command.command|join(" ") }}</pre>
+    {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+    <h2>Public Endpoints</h2>
+    {% if result.public_endpoints %}
+        <ul>{% for endpoint in result.public_endpoints %}<li><a href="{{ endpoint.url }}" target="_blank" rel="noreferrer">{{ endpoint.name }} - {{ endpoint.url }}</a></li>{% endfor %}</ul>
+    {% else %}
+        <p class="empty">No public endpoint returned.</p>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h2>Health Check</h2>
+    <div class="meta">
+        <div><span class="label">Result</span>{{ health.result or health.status or "N/A" }}</div>
+        <div><span class="label">URL</span>{{ health.url or "N/A" }}</div>
+        <div><span class="label">Status Code</span>{{ health.status_code if health.status_code is not none else "N/A" }}</div>
+        <div><span class="label">Response Time</span>{% if health.response_time_ms is not none %}{{ health.response_time_ms }} ms{% else %}N/A{% endif %}</div>
+        <div><span class="label">Attempts</span>{{ health.attempts if health.attempts is not none else "N/A" }}</div>
+        <div><span class="label">Message</span>{{ health.message or "N/A" }}</div>
+    </div>
+</section>
+
+{% set diagnostics = result.diagnostics or {} %}
+{% if diagnostics.provider_messages or diagnostics.action_hint or diagnostics.raw_error_summary or diagnostics.next_steps or diagnostics.log_commands %}
+<section class="panel">
+    <h2>Diagnostics / Logs</h2>
+    {% if diagnostics.action_hint %}<div class="notice"><strong>Action hint</strong><p>{{ diagnostics.action_hint }}</p></div>{% endif %}
+    {% if diagnostics.raw_error_summary %}<p><strong>Error summary:</strong> {{ diagnostics.raw_error_summary }}</p>{% endif %}
+    {% if diagnostics.next_steps %}<ul>{% for step in diagnostics.next_steps %}<li>{{ step }}</li>{% endfor %}</ul>{% endif %}
+    {% if diagnostics.log_commands %}
+        {% for command in diagnostics.log_commands %}
+            <p><strong>{{ command.label or "Logs" }}</strong></p>
+            <pre>{{ command.command_string or command.command|join(" ") }}</pre>
+        {% endfor %}
+    {% endif %}
+</section>
+{% endif %}
+
+{% if result.cleanup_result %}
+<section class="panel">
+    <h2>Cleanup Status</h2>
+    <p>{{ result.cleanup_result.status }}: {{ result.cleanup_result.message }}</p>
+</section>
+{% endif %}

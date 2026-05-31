@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Deployment Result{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>Deployment Result</h2>
+    <div class="action-list">
+        <a class="button secondary" href="/deployments/{{ record.id }}">Open Detail</a>
+        <a class="button secondary" href="/deployment-report/{{ record.id }}">Report</a>
+        <a class="button secondary" href="/deploy/new">New Deployment</a>
+    </div>
+</section>
+{% include "_result_sections.html" %}
+{% endblock %}

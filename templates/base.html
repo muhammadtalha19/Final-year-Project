@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Multi-Cloud Orchestrator{% endblock %}</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4f6f8;
+            --panel: #ffffff;
+            --text: #1f2933;
+            --muted: #64748b;
+            --line: #d9e2ec;
+            --primary: #1769aa;
+            --success: #16794c;
+            --warning: #a15c00;
+            --danger: #b42318;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", Arial, sans-serif;
+            line-height: 1.5;
+        }
+        .shell {
+            width: min(1180px, calc(100% - 32px));
+            margin: 28px auto 40px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            align-items: flex-start;
+            margin-bottom: 18px;
+        }
+        h1 { margin: 0; font-size: clamp(24px, 4vw, 34px); letter-spacing: 0; }
+        h2 { margin: 0 0 14px; font-size: 20px; letter-spacing: 0; }
+        h3 { margin: 20px 0 10px; font-size: 16px; letter-spacing: 0; }
+        .subtitle { margin: 6px 0 0; color: var(--muted); }
+        nav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        nav a, button, .button {
+            border: 1px solid var(--primary);
+            background: var(--primary);
+            color: white;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+        }
+        nav a.secondary, .button.secondary {
+            background: white;
+            color: var(--primary);
+        }
+        .grid { display: grid; gap: 18px; }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 20px;
+        }
+        form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .stack-form { display: grid; gap: 12px; max-width: 460px; }
+        input, select, textarea {
+            padding: 9px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fbfdff;
+            color: var(--text);
+            width: 100%;
+        }
+        input[type="file"] { min-width: min(100%, 300px); }
+        textarea { min-height: 220px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: #e8eef5;
+            color: #334e68;
+            white-space: nowrap;
+        }
+        .status.success { background: #def7ec; color: var(--success); }
+        .status.warning { background: #fff4d6; color: var(--warning); }
+        .status.danger { background: #fde8e8; color: var(--danger); }
+        .meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 12px;
+            margin: 12px 0;
+        }
+        .meta div {
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            padding: 12px;
+            background: #fbfdff;
+        }
+        .label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; vertical-align: top; }
+        th { background: #f7fafc; color: #334e68; font-size: 12px; text-transform: uppercase; }
+        ul { margin: 8px 0 0 20px; padding: 0; }
+        a { color: var(--primary); font-weight: 600; }
+        .empty { color: var(--muted); margin: 0; }
+        .notice {
+            border-left: 4px solid var(--warning);
+            background: #fffbeb;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px 0;
+        }
+        .danger-note { border-left-color: var(--danger); background: #fff1f2; }
+        pre {
+            margin: 8px 0 14px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #111827;
+            color: #f8fafc;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .action-list { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .delete-button { border-color: var(--danger); background: white; color: var(--danger); padding: 7px 11px; }
+        .inline-form { display: inline-flex; }
+        @media (max-width: 700px) {
+            header { display: block; }
+            nav { margin-top: 14px; }
+            table { display: block; overflow-x: auto; white-space: nowrap; }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <header>
+        <div>
+            <h1>Multi-Cloud Deployment Orchestrator</h1>
+            <p class="subtitle">Authenticated YAML portal for web, API, and ML API container deployments.</p>
+        </div>
+        <nav aria-label="Portal navigation">
+            <a href="/">Home</a>
+            {% if current_user.is_authenticated %}
+                <a href="/dashboard" class="secondary">Dashboard</a>
+                <a href="/deploy/new" class="secondary">New Deployment</a>
+                <a href="/deployments" class="secondary">History</a>
+                <a href="/providers" class="secondary">Providers</a>
+                <a href="/logout" class="secondary">Logout</a>
+            {% else %}
+                <a href="/login" class="secondary">Login</a>
+                <a href="/register" class="secondary">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="notice">
+                {% for message in messages %}
+                    <p>{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Home - Multi-Cloud Orchestrator{% endblock %}
+{% block content %}
+<section class="panel">
+    <h2>YAML-Based Multi-Cloud Orchestrator</h2>
+    <p>
+        Upload a YAML file, let the decision engine evaluate AWS, Azure, and GCP, and review safe dry-run or approved real deployment output.
+    </p>
+    <div class="notice">
+        <strong>Model A: admin-controlled cloud deployment</strong>
+        <p>Cloud credentials are configured by the administrator in the server environment. Users never enter AWS, Azure, or GCP secrets in this portal.</p>
+    </div>
+    <div class="action-list">
+        {% if current_user.is_authenticated %}
+            <a class="button" href="/dashboard">Open Dashboard</a>
+            <a class="button secondary" href="/deploy/new">New Deployment</a>
+        {% else %}
+            <a class="button" href="/register">Create Account</a>
+            <a class="button secondary" href="/login">Login</a>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

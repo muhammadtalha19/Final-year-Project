@@ -1,10 +1,17 @@
 import app as app_module
-from deployment_history import add_deployment_record
+from portal_models import DeploymentRecord, User, db
 
 
 def test_deployment_report_route_returns_saved_record():
-    record = add_deployment_record(
-        {
+    client = app_module.app.test_client()
+    client.post(
+        "/register",
+        data={"name": "Reporter", "email": "report@example.com", "password": "secret123"},
+        follow_redirects=True,
+    )
+    with app_module.app.app_context():
+        user = User.query.filter_by(email="report@example.com").first()
+        result = {
             "app": "report-app",
             "app_type": "api",
             "image": "dockertalha19/fyp-books-api:latest",
@@ -24,10 +31,13 @@ def test_deployment_report_route_returns_saved_record():
             "docker_image_validation": {},
             "diagnostics": {},
         }
-    )
-    app_module.app.config["TESTING"] = True
+        record = DeploymentRecord(user_id=user.id, yaml_content="app:\n  name: report-app\n", result_json=result)
+        record.apply_result(result, yaml_content=record.yaml_content)
+        db.session.add(record)
+        db.session.commit()
+        deployment_id = record.id
 
-    response = app_module.app.test_client().get(f"/deployment-report/{record['id']}")
+    response = client.get(f"/deployment-report/{deployment_id}")
 
     assert response.status_code == 200
     assert b"Deployment Report" in response.data

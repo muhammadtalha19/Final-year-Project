@@ -1,0 +1,50 @@
+{% set rows = deployments if deployments is defined else latest %}
+<table>
+    <thead>
+    <tr>
+        <th>Time</th>
+        <th>App</th>
+        <th>Type</th>
+        <th>Provider</th>
+        <th>Mode</th>
+        <th>Status</th>
+        <th>Endpoint</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for record in rows %}
+        <tr>
+            <td>{{ record.created_at.strftime("%Y-%m-%d %H:%M") if record.created_at else "N/A" }}</td>
+            <td>{{ record.app_name or "N/A" }}</td>
+            <td>{{ record.app_type or "N/A" }}</td>
+            <td>{{ record.selected_provider or "None" }} / {{ record.execution_provider or "None" }}</td>
+            <td>{{ record.deployment_mode or "N/A" }}</td>
+            <td>
+                {% set state = record.status or "unknown" %}
+                <span class="status {% if state in ['deployed', 'deleted'] %}success{% elif state in ['failed', 'configuration_error', 'provider_not_ready', 'image_validation_failed', 'delete_failed'] %}danger{% elif state in ['dry_run', 'approval_required', 'blocked_by_safety_flag', 'delete_skipped'] %}warning{% endif %}">
+                    {{ state|replace("_", " ") }}
+                </span>
+            </td>
+            <td>
+                {% if record.endpoint %}
+                    <a href="{{ record.endpoint }}" target="_blank" rel="noreferrer">{{ record.endpoint }}</a>
+                {% else %}
+                    None
+                {% endif %}
+            </td>
+            <td>
+                <div class="action-list">
+                    <a class="button secondary" href="/deployments/{{ record.id }}">View</a>
+                    <a class="button secondary" href="/deployment-report/{{ record.id }}">Report</a>
+                    {% if record.deployment_mode == "real" and record.execution_provider in ["AWS", "Azure", "GCP"] and record.status in ["deployed", "delete_failed"] %}
+                        <form class="inline-form" method="POST" action="/deployments/{{ record.id }}/delete">
+                            <button class="delete-button" type="submit">Delete</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
