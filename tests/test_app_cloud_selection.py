@@ -77,7 +77,7 @@ def _fake_result(selection):
 def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
     captured = []
 
-    def fake_deploy(config):
+    def fake_deploy(config, **kwargs):
         captured.append(config)
         return _fake_result(config["selection"])
 
@@ -92,7 +92,7 @@ def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
 
 def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
     captured = []
-    monkeypatch.setattr(app_module, "deploy_app", lambda config: captured.append(config) or _fake_result(config["selection"]))
+    monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
     app_module.app.config["TESTING"] = True
 
     response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "auto")
@@ -103,7 +103,7 @@ def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
 
 def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
     captured = []
-    monkeypatch.setattr(app_module, "deploy_app", lambda config: captured.append(config) or _fake_result(config["selection"]))
+    monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
     app_module.app.config["TESTING"] = True
 
     response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "AWS")
@@ -114,7 +114,7 @@ def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
 
 def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
     captured = []
-    monkeypatch.setattr(app_module, "deploy_app", lambda config: captured.append(config) or _fake_result(config["selection"]))
+    monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
     app_module.app.config["TESTING"] = True
 
     response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "Azure")
@@ -125,7 +125,7 @@ def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
 
 def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
     captured = []
-    monkeypatch.setattr(app_module, "deploy_app", lambda config: captured.append(config) or _fake_result(config["selection"]))
+    monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
     app_module.app.config["TESTING"] = True
 
     response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "GCP")
@@ -136,7 +136,7 @@ def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
 
 def test_existing_yaml_manual_selection_still_works_with_yaml_option(monkeypatch):
     captured = []
-    monkeypatch.setattr(app_module, "deploy_app", lambda config: captured.append(config) or _fake_result(config["selection"]))
+    monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
     app_module.app.config["TESTING"] = True
 
     response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "yaml")
@@ -144,3 +144,26 @@ def test_existing_yaml_manual_selection_still_works_with_yaml_option(monkeypatch
     assert response.status_code == 200
     assert captured[0]["selection"]["mode"] == "manual"
     assert captured[0]["selection"]["provider"] == "Azure"
+
+
+def test_confirm_real_deployment_route_uses_posted_config_payload(monkeypatch):
+    captured = []
+
+    def fake_deploy(config, **kwargs):
+        captured.append((config, kwargs))
+        return _fake_result(config["selection"])
+
+    monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
+    app_module.app.config["TESTING"] = True
+
+    response = app_module.app.test_client().post(
+        "/deploy",
+        data={
+            "confirm_real_deployment": "true",
+            "config_yaml": YAML_WITH_MANUAL_AZURE.decode("utf-8"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured[0][0]["selection"] == {"mode": "manual", "provider": "Azure"}
+    assert captured[0][1]["confirm_real_deployment"] is True

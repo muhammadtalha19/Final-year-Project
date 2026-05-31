@@ -175,7 +175,7 @@ def test_azure_real_deployment_blocked_when_flags_false(monkeypatch):
     monkeypatch.setenv("ALLOW_AZURE_DEPLOYMENT", "false")
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("blocked")))
 
-    result = orchestrator.deploy_app(_manual_config("Azure"))
+    result = orchestrator.deploy_app(_manual_config("Azure"), confirm_real_deployment=True)
 
     assert result["status"] == "blocked_by_safety_flag"
     assert result["deployment"]["status"] == "blocked_by_safety_flag"
@@ -243,7 +243,7 @@ def test_azure_deploy_uses_subprocess_argument_list_when_allowed(monkeypatch):
         lambda self, result: {"status": "skipped", "passed": None, "message": "mocked"},
     )
 
-    result = orchestrator.deploy_app(_manual_config("Azure"))
+    result = orchestrator.deploy_app(_manual_config("Azure"), confirm_real_deployment=True)
 
     assert result["status"] == "deployed"
     assert calls

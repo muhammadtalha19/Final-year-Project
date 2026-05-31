@@ -71,6 +71,7 @@ ENABLE_REAL_DEPLOYMENT=false
 ALLOW_AWS_DEPLOYMENT=false
 ALLOW_AZURE_DEPLOYMENT=false
 ALLOW_GCP_DEPLOYMENT=false
+GCP_PROJECT_ID=
 GCP_REGION=asia-south1
 GCP_PLATFORM=managed
 AZURE_RESOURCE_GROUP=
@@ -226,6 +227,14 @@ az extension add --name containerapp --upgrade
 ```
 
 Monitor free-tier usage and billing carefully, and clean up EC2 instances, Container Apps, resource groups, and related networking resources after demos.
+
+## Provider Readiness and Deployment Approval
+
+Dry-run remains the default and does not require approval. When real deployment is enabled, the orchestrator first checks provider readiness, validates the Docker image string, and then asks for explicit confirmation before calling a real provider deployment method.
+
+Readiness checks catch missing cloud setup such as AWS EC2 variables, Azure Container Apps variables, and the fact that GCP real deployment is not implemented yet. Docker image validation catches empty images and placeholder values such as `YOUR_DOCKERHUB_USERNAME`; images without tags are shown as warnings.
+
+Real deployment proceeds only when `.env` safety flags are enabled, the selected provider is ready, the Docker image validation passes, and the user confirms the approval step in the dashboard. Use cleanup after real deployments, then verify the AWS or Azure console to confirm resources were removed.
 
 ## Cleanup/Delete
 

@@ -297,7 +297,7 @@
             <h2>Deployment Result</h2>
             {% set state = result.status or "unknown" %}
             <p>
-                <span class="status {% if state in ['deployed', 'passed'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag'] %}warning{% endif %}">
+                <span class="status {% if state in ['deployed', 'passed'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked', 'provider_not_ready', 'image_validation_failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag', 'approval_required'] %}warning{% endif %}">
                     {{ state|replace("_", " ") }}
                 </span>
             </p>
@@ -320,6 +320,106 @@
                         {% endfor %}
                     </ul>
                 </div>
+            {% endif %}
+
+            {% set image_validation = result.docker_image_validation or {} %}
+            {% if image_validation.checks %}
+                <h3>Docker Image Validation</h3>
+                {% if image_validation.errors %}
+                    <div class="notice">
+                        <strong>Image validation issues</strong>
+                        <ul>
+                            {% for error in image_validation.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                {% if image_validation.warnings %}
+                    <div class="notice">
+                        <strong>Image warnings</strong>
+                        <ul>
+                            {% for warning in image_validation.warnings %}
+                                <li>{{ warning }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Image</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for check in image_validation.checks %}
+                        <tr>
+                            <td>{{ check.service }}</td>
+                            <td>{{ check.image or "N/A" }}</td>
+                            <td>
+                                <span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">
+                                    {{ check.status }}
+                                </span>
+                            </td>
+                            <td>{{ check.message }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+
+            {% set readiness = result.provider_readiness or {} %}
+            {% if readiness.checks %}
+                <h3>Provider Readiness</h3>
+                <div class="meta">
+                    <div>
+                        <span class="label">Provider</span>
+                        {{ readiness.provider or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">Ready</span>
+                        {{ "Yes" if readiness.ready else "No" }}
+                    </div>
+                    <div>
+                        <span class="label">Missing</span>
+                        {% if readiness.missing %}{{ readiness.missing|join(", ") }}{% else %}None{% endif %}
+                    </div>
+                </div>
+                {% if readiness.warnings %}
+                    <div class="notice">
+                        <strong>Readiness warnings</strong>
+                        <ul>
+                            {% for warning in readiness.warnings %}
+                                <li>{{ warning }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Check</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for check in readiness.checks %}
+                        <tr>
+                            <td>{{ check.name }}</td>
+                            <td>
+                                <span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">
+                                    {{ check.status }}
+                                </span>
+                            </td>
+                            <td>{{ check.message }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
             {% endif %}
 
             {% set decision = result.decision or {} %}
@@ -462,6 +562,54 @@
                     <p><strong>{{ command.service or "service" }}</strong></p>
                     <pre>{{ command.command_string or command.command|join(" ") }}</pre>
                 {% endfor %}
+            {% endif %}
+
+            {% set approval = result.approval or {} %}
+            {% if approval.required %}
+                <h3>Real Deployment Approval</h3>
+                <div class="notice">
+                    <strong>Approval required</strong>
+                    <p>{{ approval.warning }}</p>
+                    <div class="meta">
+                        <div>
+                            <span class="label">Application</span>
+                            {{ approval.app_name or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Selected Provider</span>
+                            {{ approval.selected_provider or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Execution Provider</span>
+                            {{ approval.execution_provider or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Docker Image</span>
+                            {{ approval.docker_image or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Port</span>
+                            {{ approval.port or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Access</span>
+                            {{ approval.access or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Estimated Cost</span>
+                            {% if approval.estimated_cost_usd is not none %}${{ approval.estimated_cost_usd }}/mo{% else %}N/A{% endif %}
+                        </div>
+                        <div>
+                            <span class="label">Readiness</span>
+                            {{ "Ready" if approval.readiness_ready else "Not ready" }}
+                        </div>
+                    </div>
+                    <form method="POST" action="/deploy">
+                        <input type="hidden" name="confirm_real_deployment" value="true">
+                        <textarea name="config_yaml" hidden>{{ approval.config_yaml }}</textarea>
+                        <button type="submit">Confirm Real Deployment</button>
+                    </form>
+                </div>
             {% endif %}
 
             <h3>Public Endpoints</h3>

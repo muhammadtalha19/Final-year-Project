@@ -38,8 +38,27 @@ def home():
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
-    uploaded_file = request.files.get("config_file")
+    confirm_real_deployment = request.form.get("confirm_real_deployment") == "true"
+    config_payload = request.form.get("config_yaml")
 
+    if confirm_real_deployment and config_payload:
+        try:
+            deployment_config = yaml.safe_load(config_payload)
+        except Exception as e:
+            result = {
+                "status": "validation_failed",
+                "validation_errors": [f"Invalid confirmation payload: {e}"],
+                "decision": {},
+                "deployment": {"status": "not_executed"},
+                "public_endpoints": [],
+                "health_check": {"status": "skipped", "message": "Invalid confirmation payload."},
+            }
+            return render_template("index.html", result=result, history=load_deployment_history(limit=10)), 400
+
+        result = deploy_app(deployment_config, confirm_real_deployment=True)
+        return render_template("index.html", result=result, history=load_deployment_history(limit=10))
+
+    uploaded_file = request.files.get("config_file")
     if not uploaded_file:
         result = {
             "status": "validation_failed",
@@ -65,7 +84,7 @@ def deploy():
         return render_template("index.html", result=result, history=load_deployment_history(limit=10)), 400
 
     _apply_cloud_selection_override(deployment_config, request.form.get("cloud_selection", "yaml"))
-    result = deploy_app(deployment_config)
+    result = deploy_app(deployment_config, confirm_real_deployment=confirm_real_deployment)
     return render_template("index.html", result=result, history=load_deployment_history(limit=10))
 
 
