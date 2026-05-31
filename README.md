@@ -151,6 +151,12 @@ selection:
 
 Manual provider values must be `AWS`, `GCP`, or `Azure`. Manual selection does not bypass safety checks: the selected provider is still validated against cost, uptime, preferred region, and deployment support. If the manual provider is blocked, the orchestrator stops before generating a deployment plan and shows a recommended eligible provider when one exists.
 
+## Frontend Cloud Selection
+
+The deployment form includes a cloud provider dropdown. `Use YAML selection` leaves the uploaded YAML unchanged. Choosing `Auto select best provider`, `AWS`, `Azure`, or `GCP` writes the matching `selection` block before validation, so the UI choice overrides YAML only when a non-YAML option is selected.
+
+Real deployment is still controlled only by `.env` safety flags such as `ENABLE_REAL_DEPLOYMENT` and `ALLOW_AWS_DEPLOYMENT`; the UI dropdown does not enable real cloud execution.
+
 ## Running Locally
 
 ```bash

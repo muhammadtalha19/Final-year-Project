@@ -117,6 +117,15 @@
             background: #fbfdff;
         }
 
+        select {
+            min-width: min(100%, 240px);
+            padding: 9px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fbfdff;
+            color: var(--text);
+        }
+
         .status {
             display: inline-flex;
             align-items: center;
@@ -269,6 +278,16 @@
             <h2>Upload YAML</h2>
             <form method="POST" action="/deploy" enctype="multipart/form-data">
                 <input type="file" name="config_file" accept=".yaml,.yml" required>
+                <label>
+                    <span class="label">Cloud Selection</span>
+                    <select name="cloud_selection">
+                        <option value="yaml" selected>Use YAML selection</option>
+                        <option value="auto">Auto select best provider</option>
+                        <option value="AWS">AWS</option>
+                        <option value="Azure">Azure</option>
+                        <option value="GCP">GCP</option>
+                    </select>
+                </label>
                 <button type="submit">Run Orchestrator</button>
             </form>
         </section>

@@ -64,6 +64,7 @@ def deploy():
         }
         return render_template("index.html", result=result, history=load_deployment_history(limit=10)), 400
 
+    _apply_cloud_selection_override(deployment_config, request.form.get("cloud_selection", "yaml"))
     result = deploy_app(deployment_config)
     return render_template("index.html", result=result, history=load_deployment_history(limit=10))
 
@@ -77,6 +78,21 @@ def history():
 def delete_saved_deployment(deployment_id):
     delete_result = delete_deployment(deployment_id)
     return render_template("index.html", delete_result=delete_result, history=load_deployment_history(), show_history=True)
+
+
+def _apply_cloud_selection_override(deployment_config, cloud_selection):
+    if not isinstance(deployment_config, dict):
+        return
+
+    selection_map = {
+        "auto": {"mode": "auto"},
+        "AWS": {"mode": "manual", "provider": "AWS"},
+        "Azure": {"mode": "manual", "provider": "Azure"},
+        "GCP": {"mode": "manual", "provider": "GCP"},
+    }
+    override = selection_map.get(cloud_selection)
+    if override:
+        deployment_config["selection"] = override
 
 
 # ya api route ha configurantion management ky liye (API ROUTES (Config Management)).
