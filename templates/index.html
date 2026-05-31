@@ -243,6 +243,22 @@
             padding: 7px 11px;
         }
 
+        .action-list {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .report-link {
+            display: inline-flex;
+            border: 1px solid var(--primary);
+            border-radius: 6px;
+            padding: 7px 11px;
+            text-decoration: none;
+            background: white;
+        }
+
         @media (max-width: 700px) {
             header {
                 display: block;
@@ -296,11 +312,42 @@
         <section class="panel">
             <h2>Deployment Result</h2>
             {% set state = result.status or "unknown" %}
+            {% set decision = result.decision or {} %}
+            {% set deployment = result.deployment or {} %}
+            {% set health = result.health_check or {} %}
+            {% set public_url = result.public_endpoints[0].url if result.public_endpoints else "N/A" %}
             <p>
-                <span class="status {% if state in ['deployed', 'passed'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked', 'provider_not_ready', 'image_validation_failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag', 'approval_required'] %}warning{% endif %}">
+                <span class="status {% if state in ['deployed', 'passed', 'deleted'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked', 'provider_not_ready', 'image_validation_failed', 'delete_failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag', 'approval_required', 'delete_skipped'] %}warning{% endif %}">
                     {{ state|replace("_", " ") }}
                 </span>
             </p>
+
+            <div class="meta">
+                <div>
+                    <span class="label">Selected Provider</span>
+                    {{ decision.selected_provider or "None" }}
+                </div>
+                <div>
+                    <span class="label">Deployment Mode</span>
+                    {{ result.deployment_mode or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Status</span>
+                    {{ deployment.status or result.status or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Public URL</span>
+                    {% if result.public_endpoints %}
+                        <a href="{{ public_url }}" target="_blank" rel="noreferrer">{{ public_url }}</a>
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </div>
+                <div>
+                    <span class="label">Health</span>
+                    {{ health.result or health.status or "N/A" }}
+                </div>
+            </div>
 
             {% if result.validation_errors %}
                 <h3>Validation Errors</h3>
@@ -325,6 +372,16 @@
             {% set image_validation = result.docker_image_validation or {} %}
             {% if image_validation.checks %}
                 <h3>Docker Image Validation</h3>
+                <div class="meta">
+                    <div>
+                        <span class="label">Check Type</span>
+                        {{ image_validation.check_type or "syntax_only" }}
+                    </div>
+                    <div>
+                        <span class="label">Valid</span>
+                        {{ "Yes" if image_validation.valid else "No" }}
+                    </div>
+                </div>
                 {% if image_validation.errors %}
                     <div class="notice">
                         <strong>Image validation issues</strong>
@@ -422,7 +479,21 @@
                 </table>
             {% endif %}
 
-            {% set decision = result.decision or {} %}
+            {% set bootstrap = result.bootstrap_plan or {} %}
+            {% if bootstrap.commands %}
+                <h3>Bootstrap Suggestions</h3>
+                <div class="notice">
+                    <strong>{{ bootstrap.provider }} setup plan</strong>
+                    <p>{{ bootstrap.message }}</p>
+                    {% if bootstrap.missing_resources %}
+                        <p><strong>Likely missing:</strong> {{ bootstrap.missing_resources|join(", ") }}</p>
+                    {% endif %}
+                    {% for command in bootstrap.commands %}
+                        <pre>{{ command }}</pre>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
             {% if decision %}
                 <div class="meta">
                     <div>
@@ -432,6 +503,10 @@
                     <div>
                         <span class="label">Environment</span>
                         {{ result.environment or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">App Type</span>
+                        {{ result.app_type or "api" }}
                     </div>
                     <div>
                         <span class="label">Selected Provider</span>
@@ -513,7 +588,6 @@
                 {% endif %}
             {% endif %}
 
-            {% set deployment = result.deployment or {} %}
             <h3>Deployment Status</h3>
             <div class="meta">
                 <div>
@@ -623,18 +697,60 @@
                 <p class="empty">No public endpoint returned.</p>
             {% endif %}
 
-            {% set health = result.health_check or {} %}
             <h3>Health Check</h3>
             <div class="meta">
                 <div>
                     <span class="label">Result</span>
-                    {{ health.status or "N/A" }}
+                    {{ health.result or health.status or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">URL</span>
+                    {{ health.url or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Status Code</span>
+                    {{ health.status_code if health.status_code is not none else "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Response Time</span>
+                    {% if health.response_time_ms is not none %}{{ health.response_time_ms }} ms{% else %}N/A{% endif %}
+                </div>
+                <div>
+                    <span class="label">Attempts</span>
+                    {{ health.attempts if health.attempts is not none else "N/A" }}
                 </div>
                 <div>
                     <span class="label">Message</span>
                     {{ health.message or "N/A" }}
                 </div>
             </div>
+
+            {% set diagnostics = result.diagnostics or {} %}
+            {% if diagnostics.provider_messages or diagnostics.action_hint or diagnostics.raw_error_summary or diagnostics.next_steps or diagnostics.log_commands %}
+                <h3>Diagnostics / Logs</h3>
+                {% if diagnostics.action_hint %}
+                    <div class="notice">
+                        <strong>Action hint</strong>
+                        <p>{{ diagnostics.action_hint }}</p>
+                    </div>
+                {% endif %}
+                {% if diagnostics.raw_error_summary %}
+                    <p><strong>Error summary:</strong> {{ diagnostics.raw_error_summary }}</p>
+                {% endif %}
+                {% if diagnostics.next_steps %}
+                    <ul>
+                        {% for step in diagnostics.next_steps %}
+                            <li>{{ step }}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+                {% if diagnostics.log_commands %}
+                    {% for command in diagnostics.log_commands %}
+                        <p><strong>{{ command.label or "Logs" }}</strong></p>
+                        <pre>{{ command.command_string or command.command|join(" ") }}</pre>
+                    {% endfor %}
+                {% endif %}
+            {% endif %}
         </section>
         {% endif %}
 
@@ -655,6 +771,7 @@
                     <tr>
                         <th>Timestamp</th>
                         <th>App</th>
+                        <th>Type</th>
                         <th>Selected</th>
                         <th>Execution</th>
                         <th>Status</th>
@@ -667,6 +784,7 @@
                         <tr>
                             <td>{{ record.timestamp }}</td>
                             <td>{{ record.app_name or "N/A" }}</td>
+                            <td>{{ record.app_type or "N/A" }}</td>
                             <td>{{ record.selected_provider or "None" }}</td>
                             <td>{{ record.execution_provider or "None" }}</td>
                             <td>{{ record.status }}</td>
@@ -680,13 +798,19 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {% if record.id and record.deployment_mode == "real" and record.execution_provider in ["AWS", "Azure"] and record.status in ["deployed", "delete_failed"] %}
-                                    <form class="delete-form" method="POST" action="/deployments/{{ record.id }}/delete">
-                                        <button class="delete-button" type="submit">Delete</button>
-                                    </form>
-                                {% else %}
-                                    None
-                                {% endif %}
+                                <div class="action-list">
+                                    {% if record.id %}
+                                        <a class="report-link" href="/deployment-report/{{ record.id }}">Report</a>
+                                    {% endif %}
+                                    {% if record.id and record.deployment_mode == "real" and record.execution_provider in ["AWS", "Azure", "GCP"] and record.status in ["deployed", "delete_failed"] %}
+                                        <form class="delete-form" method="POST" action="/deployments/{{ record.id }}/delete">
+                                            <button class="delete-button" type="submit">Delete</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if not record.id %}
+                                        None
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                     {% endfor %}

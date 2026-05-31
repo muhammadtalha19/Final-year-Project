@@ -1,4 +1,5 @@
 from docker_image_validation import validate_docker_images
+import docker_image_validation
 
 
 def _config(image):
@@ -41,5 +42,33 @@ def test_valid_tagged_docker_image_passes():
     result = validate_docker_images(_config("dockertalha19/fyp-books-api:latest"))
 
     assert result["valid"] is True
+    assert result["check_type"] == "syntax_only"
     assert result["errors"] == []
     assert result["warnings"] == []
+
+
+def test_registry_check_disabled_does_not_call_requests(monkeypatch):
+    monkeypatch.setenv("ENABLE_IMAGE_REGISTRY_CHECK", "false")
+    monkeypatch.setattr(
+        docker_image_validation.requests,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no internet")),
+    )
+
+    result = validate_docker_images(_config("dockertalha19/fyp-books-api:latest"))
+
+    assert result["valid"] is True
+    assert result["check_type"] == "syntax_only"
+
+
+def test_registry_check_enabled_uses_mocked_request(monkeypatch):
+    class Response:
+        status_code = 200
+
+    monkeypatch.setenv("ENABLE_IMAGE_REGISTRY_CHECK", "true")
+    monkeypatch.setattr(docker_image_validation.requests, "get", lambda *args, **kwargs: Response())
+
+    result = validate_docker_images(_config("dockertalha19/fyp-books-api:latest"))
+
+    assert result["valid"] is True
+    assert result["check_type"] == "registry_checked"

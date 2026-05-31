@@ -17,14 +17,14 @@ PROVIDER_CATALOG: Dict[str, Dict[str, Any]] = {
         "uptime_percent": 99.95,
         "supported_deployment": ["container"],
         "regions": ["asia", "europe", "us"],
-        "execution_supported": False,
+        "execution_supported": True,
     },
     "Azure": {
         "estimated_cost_usd": 15,
         "uptime_percent": 99.90,
         "supported_deployment": ["container"],
         "regions": ["asia", "europe", "us"],
-        "execution_supported": False,
+        "execution_supported": True,
     },
 }
 

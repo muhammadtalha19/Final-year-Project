@@ -30,6 +30,7 @@ def test_valid_single_service_yaml_passes_validation():
 
     assert config["app"]["name"] == "img2pdf-web"
     assert config["deployment"]["type"] == "container"
+    assert config["app"]["type"] == "api"
     assert config["services"][0]["image"] == "dockertalha19/img2pdf"
     assert config["services"][0]["port"] == 80
     assert config["selection"] == {"mode": "auto", "provider": None}
@@ -130,3 +131,84 @@ def test_auto_selection_ignores_provider_if_present():
     config = validate_config(raw)
 
     assert config["selection"] == {"mode": "auto", "provider": None}
+
+
+def test_app_type_and_resources_are_validated():
+    raw = yaml.safe_load(
+        """
+        app:
+          name: ml-api
+          environment: production
+          type: ml-api
+        deployment:
+          type: container
+          image: dockertalha19/fyp-ml-api:latest
+          port: 8000
+        resources:
+          cpu: 1
+          memory: 1Gi
+          min_instances: 0
+          max_instances: 1
+        health_check: /health
+        requirements:
+          max_monthly_cost_usd: 20
+          min_uptime_percent: 99.9
+        """
+    )
+
+    config = validate_config(raw)
+
+    assert config["app"]["type"] == "ml-api"
+    assert config["resources"]["cpu"] == 1.0
+    assert config["resources"]["memory"] == "1Gi"
+    assert config["resources"]["min_instances"] == 0
+    assert config["resources"]["max_instances"] == 1
+    assert config["health_check"]["path"] == "/health"
+
+
+def test_invalid_app_type_fails_validation():
+    raw = yaml.safe_load(
+        """
+        app:
+          name: bad-type
+          environment: production
+          type: batch
+        deployment:
+          type: container
+          image: nginx
+          port: 80
+        requirements:
+          max_monthly_cost_usd: 20
+          min_uptime_percent: 99.9
+        """
+    )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        validate_config(raw)
+
+    assert "app.type" in str(exc_info.value)
+
+
+def test_high_scale_requires_env_flag(monkeypatch):
+    monkeypatch.setenv("ALLOW_HIGH_SCALE", "false")
+    raw = yaml.safe_load(
+        """
+        app:
+          name: high-scale
+          environment: production
+        deployment:
+          type: container
+          image: nginx
+          port: 80
+        resources:
+          max_instances: 2
+        requirements:
+          max_monthly_cost_usd: 20
+          min_uptime_percent: 99.9
+        """
+    )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        validate_config(raw)
+
+    assert "ALLOW_HIGH_SCALE" in str(exc_info.value)

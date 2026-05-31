@@ -1,0 +1,28 @@
+app:
+  name: fyp-ml-api
+  environment: production
+  type: ml-api
+
+selection:
+  mode: manual
+  provider: GCP
+
+deployment:
+  type: container
+  image: dockertalha19/fyp-ml-api:latest
+  port: 8000
+  replicas: 1
+
+resources:
+  cpu: 1
+  memory: 1Gi
+  min_instances: 0
+  max_instances: 1
+
+health_check: /health
+
+requirements:
+  max_monthly_cost_usd: 20
+  min_uptime_percent: 99.9
+  preferred_region: asia
+  public_access: true

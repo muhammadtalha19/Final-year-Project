@@ -1,3 +1,5 @@
+import os
+import re
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +37,7 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
 
     app_name = _required_string(app, "name", "app.name", errors)
     environment = _required_string(app, "environment", "app.environment", errors)
+    app_type = _app_type(app.get("type"), errors)
 
     if deployment is None and services is None:
         errors.append("Either deployment or services must exist.")
@@ -68,6 +71,8 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
         default_public=public_access,
         errors=errors,
     )
+    normalized_resources = _normalize_resources(source.get("resources"), errors)
+    health_check = _normalize_health_check(source.get("health_check"), errors)
 
     if errors:
         raise ConfigValidationError(errors)
@@ -76,12 +81,14 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
         "app": {
             "name": app_name,
             "environment": environment,
+            "type": app_type,
         },
         "deployment": {
             "type": str(deployment_type).strip().lower(),
         },
         "services": normalized_services,
-        "resources": source.get("resources", {}),
+        "resources": normalized_resources,
+        "health_check": health_check,
         "requirements": {
             "max_monthly_cost_usd": max_cost,
             "min_uptime_percent": min_uptime,
@@ -129,6 +136,19 @@ def _optional_bool(value: Any, field: str, errors: List[str]) -> Optional[bool]:
         return value
     errors.append(f"{field} must be boolean if provided.")
     return None
+
+
+def _app_type(value: Any, errors: List[str]) -> str:
+    if value is None:
+        return "api"
+    if not isinstance(value, str) or not value.strip():
+        errors.append("app.type must be one of static-web, api, ml-api.")
+        return "api"
+    normalized = value.strip().lower()
+    if normalized not in {"static-web", "api", "ml-api"}:
+        errors.append("app.type must be one of static-web, api, ml-api.")
+        return "api"
+    return normalized
 
 
 def _positive_number(value: Any, field: str, errors: List[str]) -> Optional[float]:
@@ -193,6 +213,75 @@ def _replicas(value: Any, field: str, errors: List[str]) -> int:
     return number
 
 
+def _non_negative_int(value: Any, field: str, errors: List[str], default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        errors.append(f"{field} must be an integer greater than or equal to 0.")
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        errors.append(f"{field} must be an integer greater than or equal to 0.")
+        return default
+    if number < 0:
+        errors.append(f"{field} must be greater than or equal to 0.")
+        return default
+    return number
+
+
+def _normalize_resources(value: Any, errors: List[str]) -> Dict[str, Any]:
+    if value is None:
+        resources: Dict[str, Any] = {}
+    elif isinstance(value, dict):
+        resources = deepcopy(value)
+    else:
+        errors.append("resources must be a mapping/object if provided.")
+        resources = {}
+
+    normalized: Dict[str, Any] = {
+        "min_instances": _non_negative_int(resources.get("min_instances"), "resources.min_instances", errors, 0),
+        "max_instances": _non_negative_int(resources.get("max_instances"), "resources.max_instances", errors, 1),
+    }
+
+    if "cpu" in resources:
+        normalized["cpu"] = _positive_number(resources.get("cpu"), "resources.cpu", errors)
+
+    if "memory" in resources:
+        memory = resources.get("memory")
+        if isinstance(memory, str) and re.fullmatch(r"[1-9][0-9]*(Mi|Gi)", memory.strip()):
+            normalized["memory"] = memory.strip()
+        else:
+            errors.append("resources.memory must look like 512Mi, 1Gi, or 2Gi.")
+
+    if normalized["max_instances"] < 1:
+        errors.append("resources.max_instances must be greater than or equal to 1.")
+        normalized["max_instances"] = 1
+    if normalized["min_instances"] > normalized["max_instances"]:
+        errors.append("resources.min_instances must not exceed resources.max_instances.")
+    if normalized["max_instances"] > 1 and not _env_bool("ALLOW_HIGH_SCALE"):
+        errors.append("resources.max_instances must not exceed 1 unless ALLOW_HIGH_SCALE=true.")
+
+    return normalized
+
+
+def _normalize_health_check(value: Any, errors: List[str]) -> Dict[str, Any]:
+    if value is None:
+        return {"path": "/"}
+    if isinstance(value, str) and value.strip():
+        return {"path": _normalize_health_path(value.strip())}
+    if isinstance(value, dict):
+        path = value.get("path", "/")
+        if isinstance(path, str) and path.strip():
+            return {"path": _normalize_health_path(path.strip())}
+    errors.append("health_check must be a path string or mapping with a path value if provided.")
+    return {"path": "/"}
+
+
+def _normalize_health_path(path: str) -> str:
+    return path if path.startswith("/") else f"/{path}"
+
+
 def _first_present(mapping: Optional[Dict[str, Any]], keys: List[str], default: Any = None) -> Any:
     if not isinstance(mapping, dict):
         return default
@@ -200,6 +289,10 @@ def _first_present(mapping: Optional[Dict[str, Any]], keys: List[str], default: 
         if key in mapping:
             return mapping[key]
     return default
+
+
+def _env_bool(name: str) -> bool:
+    return os.getenv(name, "false").strip().lower() == "true"
 
 
 def _normalize_selection(value: Any, errors: List[str]) -> Dict[str, Optional[str]]:

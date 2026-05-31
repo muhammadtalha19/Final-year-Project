@@ -6,10 +6,12 @@ import yaml
 
 from config_schema import ConfigValidationError, get_service_definitions, validate_config
 from decision_engine import select_provider
+from diagnostics import build_diagnostics
 from deployment_history import add_deployment_record, get_deployment_record, update_deployment_record
 from docker_image_validation import validate_docker_images
 from pricing.models import PriceEstimate
 from pricing.pricing_service import get_price_estimates
+from provider_bootstrap import generate_provider_bootstrap_plan
 from provider_readiness import check_provider_readiness
 from providers.aws_provider import AWSProvider
 from providers.azure_mock import AzureMockProvider
@@ -37,6 +39,7 @@ def deploy_app(
     except ConfigValidationError as exc:
         result = {
             "app": _safe_app_value(config, "name"),
+            "app_type": _safe_app_value(config, "type"),
             "environment": _safe_app_value(config, "environment"),
             "status": "validation_failed",
             "deployment_mode": "dry_run" if not _real_deployment_enabled() else "real",
@@ -46,7 +49,9 @@ def deploy_app(
             "pricing": {},
             "provider_readiness": {},
             "docker_image_validation": {},
+            "bootstrap_plan": {},
             "approval": {},
+            "diagnostics": {},
             "deployment": {"status": "not_executed", "message": "Validation failed."},
             "deployment_steps": ["YAML validation failed"],
             "logs": ["YAML validation failed"],
@@ -54,14 +59,15 @@ def deploy_app(
             "public_endpoints": [],
             "health_check": _skipped_health("Health check skipped because validation failed."),
         }
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     pricing_estimates = get_price_estimates(validated)
     decision = select_provider(validated, price_estimates=pricing_estimates)
     image_validation = validate_docker_images(validated)
     result = {
         "app": validated["app"]["name"],
+        "app_type": validated["app"]["type"],
+        "image": _first_service(validated).get("image"),
         "environment": validated["app"]["environment"],
         "status": "pending",
         "deployment_mode": "real" if _real_deployment_enabled() else "dry_run",
@@ -71,7 +77,9 @@ def deploy_app(
         "pricing": _pricing_to_dict(pricing_estimates),
         "provider_readiness": {},
         "docker_image_validation": image_validation,
+        "bootstrap_plan": {},
         "approval": {},
+        "diagnostics": {},
         "deployment": {},
         "deployment_steps": ["YAML validation passed", "Provider decision completed"],
         "logs": ["YAML validation passed", "Provider decision completed"],
@@ -94,8 +102,7 @@ def deploy_app(
         )
         result["deployment_steps"].append("Deployment stopped before plan generation")
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     if not decision.get("selected_provider"):
         result.update(
@@ -110,12 +117,13 @@ def deploy_app(
         )
         result["deployment_steps"].append("Deployment stopped before execution")
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     selected_provider = decision["selected_provider"]
     provider_readiness = check_provider_readiness(selected_provider, validated)
     result["provider_readiness"] = provider_readiness
+    if not provider_readiness.get("ready", False):
+        result["bootstrap_plan"] = generate_provider_bootstrap_plan(selected_provider)
 
     if not _real_deployment_enabled():
         execution_provider = selected_provider
@@ -142,8 +150,7 @@ def deploy_app(
         result["deployment_steps"].append(f"Dry-run provider: {execution_provider}")
         result["deployment_steps"].append(deployment.get("message", "Dry-run plan generated."))
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     execution_provider = selected_provider
     decision = _decision_for_selected_execution(
@@ -166,8 +173,7 @@ def deploy_app(
         )
         result["deployment_steps"].append("Deployment stopped before execution")
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     provider = _provider_instance(execution_provider)
     plan = provider.generate_plan(validated)
@@ -194,30 +200,7 @@ def deploy_app(
         result["deployment_steps"].append(f"Execution provider: {execution_provider}")
         result["deployment_steps"].append(deployment["message"])
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
-
-    if execution_provider == "GCP":
-        deployment = {
-            **plan,
-            "status": "blocked_by_safety_flag",
-            "deployment_mode": "real",
-            "message": "Real GCP deployment is not implemented in this project yet. No gcloud command was executed.",
-        }
-        result.update(
-            {
-                "status": "blocked_by_safety_flag",
-                "deployment_mode": "real",
-                "deployment": deployment,
-                "generated_commands": plan.get("generated_commands", []),
-                "health_check": _skipped_health("Health check skipped because real GCP deployment is not implemented."),
-            }
-        )
-        result["deployment_steps"].append(f"Execution provider: {execution_provider}")
-        result["deployment_steps"].append(deployment["message"])
-        result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     if not image_validation.get("valid", False):
         deployment = {
@@ -238,8 +221,7 @@ def deploy_app(
         result["deployment_steps"].append(f"Execution provider: {execution_provider}")
         result["deployment_steps"].append(deployment["message"])
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     if not provider_readiness.get("ready", False):
         deployment = {
@@ -261,8 +243,7 @@ def deploy_app(
         result["deployment_steps"].append(f"Execution provider: {execution_provider}")
         result["deployment_steps"].append(deployment["message"])
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     if not confirm_real_deployment:
         deployment = {
@@ -284,8 +265,7 @@ def deploy_app(
         result["deployment_steps"].append(f"Execution provider: {execution_provider}")
         result["deployment_steps"].append(deployment["message"])
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     if not execute:
         result.update(
@@ -303,10 +283,10 @@ def deploy_app(
         )
         result["deployment_steps"].append("Execution skipped")
         result["logs"] = list(result["deployment_steps"])
-        add_deployment_record(result)
-        return result
+        return _finalize_result(result)
 
     deployment = provider.deploy(validated)
+    deployment["health_check_path"] = validated.get("health_check", {}).get("path", "/")
     endpoints = deployment.get("service_endpoints", [])
     health_check = provider.health_check(deployment) if deployment.get("status") == "deployed" else _skipped_health(
         "Health check skipped because deployment did not complete successfully."
@@ -326,8 +306,7 @@ def deploy_app(
     result["deployment_steps"].append(f"Execution provider: {execution_provider}")
     result["deployment_steps"].append(deployment.get("message", "Deployment finished."))
     result["logs"] = list(result["deployment_steps"])
-    add_deployment_record(result)
-    return result
+    return _finalize_result(result)
 
 
 def _approval_summary(
@@ -375,11 +354,11 @@ def delete_deployment(deployment_id: str) -> Dict[str, Any]:
             "status": "delete_skipped",
             "message": "Cleanup skipped because this record is not an active real deployment.",
         }
-    elif execution_provider not in {"AWS", "Azure"}:
+    elif execution_provider not in {"AWS", "Azure", "GCP"}:
         delete_result = {
             "provider": execution_provider,
             "status": "delete_skipped",
-            "message": "Cleanup skipped because real GCP cleanup is not implemented.",
+            "message": "Cleanup skipped because this provider does not have a cleanup backend.",
         }
     else:
         delete_result = _provider_instance(execution_provider).delete(record)
@@ -392,6 +371,133 @@ def delete_deployment(deployment_id: str) -> Dict[str, Any]:
         },
     )
     return delete_result
+
+
+def build_deployment_report(deployment_id: str) -> Optional[str]:
+    record = get_deployment_record(deployment_id)
+    if not record:
+        return None
+
+    lines = [
+        "Deployment Report",
+        "=================",
+        f"Timestamp: {record.get('timestamp', 'N/A')}",
+        f"App name: {record.get('app_name', 'N/A')}",
+        f"App type: {record.get('app_type', 'N/A')}",
+        f"Image: {record.get('image', 'N/A')}",
+        f"Selected provider: {record.get('selected_provider', 'N/A')}",
+        f"Execution provider: {record.get('execution_provider', 'N/A')}",
+        f"Deployment mode: {record.get('deployment_mode', 'N/A')}",
+        f"Status: {record.get('status', 'N/A')}",
+        "",
+        "Provider Evaluation:",
+    ]
+    for provider in record.get("evaluated_providers", []):
+        lines.append(
+            f"- {provider.get('provider')}: eligible={provider.get('eligible')}, "
+            f"cost=${provider.get('estimated_cost_usd')}/mo, uptime={provider.get('uptime_percent')}%, "
+            f"score={provider.get('score')}"
+        )
+
+    lines.extend(["", "Generated Commands:"])
+    for command in record.get("generated_commands", []):
+        lines.append(f"- {command.get('command_string') or ' '.join(command.get('command', []))}")
+
+    lines.extend(["", "Public Endpoints:"])
+    for endpoint in record.get("public_endpoints", []):
+        lines.append(f"- {endpoint.get('name', 'service')}: {endpoint.get('url')}")
+
+    health = record.get("health_check", {})
+    lines.extend(
+        [
+            "",
+            "Health Check:",
+            f"- Result: {health.get('result') or health.get('status', 'N/A')}",
+            f"- URL: {health.get('url', 'N/A')}",
+            f"- Status code: {health.get('status_code', 'N/A')}",
+            f"- Attempts: {health.get('attempts', 'N/A')}",
+            f"- Message: {health.get('message', 'N/A')}",
+            "",
+            "Provider Readiness:",
+            f"- Ready: {record.get('provider_readiness', {}).get('ready', 'N/A')}",
+            f"- Missing: {', '.join(record.get('provider_readiness', {}).get('missing', [])) or 'None'}",
+            "",
+            "Docker Image Validation:",
+            f"- Type: {record.get('docker_image_validation', {}).get('check_type', 'N/A')}",
+            f"- Valid: {record.get('docker_image_validation', {}).get('valid', 'N/A')}",
+            "",
+            "Cleanup:",
+            f"- Status: {record.get('cleanup_result', {}).get('status', 'N/A')}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _finalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    result["diagnostics"] = _diagnostics_for_result(result)
+    add_deployment_record(result)
+    return result
+
+
+def _diagnostics_for_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    deployment = result.get("deployment", {})
+    generated_commands = result.get("generated_commands") or deployment.get("generated_commands", [])
+    provider_messages = list(result.get("logs") or deployment.get("logs") or [])
+    action_hint = deployment.get("action_hint") or ""
+    raw_error_summary = deployment.get("stderr") or ""
+    if not raw_error_summary and result.get("status") in {"failed", "configuration_error", "provider_not_ready"}:
+        raw_error_summary = deployment.get("message", "")
+
+    next_steps = _next_steps_for_result(result)
+    log_commands = _log_commands_for_result(result)
+
+    return build_diagnostics(
+        generated_commands=generated_commands,
+        provider_messages=provider_messages,
+        action_hint=action_hint,
+        raw_error_summary=raw_error_summary,
+        next_steps=next_steps,
+        log_commands=log_commands,
+    )
+
+
+def _next_steps_for_result(result: Dict[str, Any]) -> list[str]:
+    status = result.get("status")
+    if status == "approval_required":
+        return ["Review the plan and click Confirm Real Deployment only in a controlled cloud account."]
+    if status == "provider_not_ready":
+        return ["Review provider readiness checks and bootstrap suggestions before retrying."]
+    if status == "image_validation_failed":
+        return ["Replace placeholder or invalid Docker image references and upload the YAML again."]
+    if status == "blocked_by_safety_flag":
+        return ["Enable the matching ALLOW_*_DEPLOYMENT flag only when you intend to create real resources."]
+    if status == "deployed":
+        return ["Verify the public endpoint, monitor billing, and use cleanup when the demo is complete."]
+    if status == "dry_run":
+        return ["Review generated commands. No cloud resources were created."]
+    return []
+
+
+def _log_commands_for_result(result: Dict[str, Any]) -> list[Dict[str, Any]]:
+    provider_name = result.get("decision", {}).get("execution_provider") or result.get("deployment", {}).get("provider")
+    if not provider_name:
+        return []
+    try:
+        provider = _provider_instance(provider_name)
+        return provider.get_logs(_history_like_record(result)).get("commands", [])
+    except Exception:
+        return []
+
+
+def _history_like_record(result: Dict[str, Any]) -> Dict[str, Any]:
+    deployment = result.get("deployment", {})
+    return {
+        "app_name": result.get("app"),
+        "instance_id": deployment.get("instance_id"),
+        "app_names": deployment.get("app_names", []),
+        "service_names": deployment.get("service_names", []),
+        "deployment": deployment,
+    }
 
 
 def _first_service(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -419,8 +525,13 @@ def _provider_instance(provider_name: str):
 
 def _skipped_health(message: str) -> Dict[str, Any]:
     return {
+        "result": "skipped",
         "status": "skipped",
         "passed": None,
+        "url": None,
+        "status_code": None,
+        "response_time_ms": None,
+        "attempts": 0,
         "message": message,
     }
 

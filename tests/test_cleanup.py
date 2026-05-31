@@ -102,13 +102,19 @@ def test_orchestrator_skips_delete_for_dry_run_record(monkeypatch):
     assert updated["status"] == "delete_skipped"
 
 
-def test_orchestrator_skips_gcp_cleanup(monkeypatch):
+def test_orchestrator_calls_gcp_cleanup_for_real_record(monkeypatch):
+    called = {"delete": False}
     record = add_deployment_record(_stored_result("GCP"))
-    monkeypatch.setattr(GCPMockProvider, "delete", lambda self, value: (_ for _ in ()).throw(AssertionError("skip")))
+
+    def fake_delete(self, value):
+        called["delete"] = True
+        return {"provider": "GCP", "status": "deleted", "message": "deleted"}
+
+    monkeypatch.setattr(GCPMockProvider, "delete", fake_delete)
 
     result = delete_deployment(record["id"])
     updated = get_deployment_record(record["id"])
 
-    assert result["status"] == "delete_skipped"
-    assert "GCP" in result["message"]
-    assert updated["status"] == "delete_skipped"
+    assert result["status"] == "deleted"
+    assert called["delete"] is True
+    assert updated["status"] == "deleted"

@@ -3,6 +3,7 @@ import re
 import shlex
 import time
 from typing import Any, Dict, List
+from urllib.parse import urlparse, urlunparse
 
 from config_schema import get_service_definitions
 from decision_engine import PROVIDER_CATALOG
@@ -46,7 +47,7 @@ class AWSProvider(CloudProvider):
                     "--name",
                     _safe_name(service["name"]),
                     "-p",
-                    f"{int(service['port'])}:{int(service['port'])}",
+                    f"{_host_port(service)}:{int(service['port'])}",
                     "--restart",
                     "unless-stopped",
                     service["image"],
@@ -54,7 +55,7 @@ class AWSProvider(CloudProvider):
                 "command_string": (
                     "docker run -d "
                     f"--name {_safe_name(service['name'])} "
-                    f"-p {int(service['port'])}:{int(service['port'])} "
+                    f"-p {_host_port(service)}:{int(service['port'])} "
                     f"--restart unless-stopped {shlex.quote(service['image'])}"
                 ),
             }
@@ -70,6 +71,7 @@ class AWSProvider(CloudProvider):
             "port": first_service.get("port"),
             "region": self.region or "",
             "instance_type": self.instance_type,
+            "resources": config.get("resources", {}),
             "required_env_vars": [
                 "AWS_REGION",
                 "AWS_AMI_ID",
@@ -92,6 +94,7 @@ class AWSProvider(CloudProvider):
                 "status": "configuration_error",
                 "missing_vars": missing,
                 "message": "Missing AWS environment variables: " + ", ".join(missing),
+                "action_hint": "Fill the missing AWS variables in .env before enabling real AWS deployment.",
                 "logs": [],
                 "generated_commands": [],
                 "endpoints": [],
@@ -116,12 +119,13 @@ class AWSProvider(CloudProvider):
 
         try:
             ec2 = self._client()
+            subnet_id = self._select_supported_subnet(ec2)
             response = ec2.run_instances(
                 ImageId=self.ami_id,
                 InstanceType=self.instance_type,
                 KeyName=self.key_name,
                 SecurityGroupIds=[self.security_group_id],
-                SubnetId=self.subnet_id,
+                SubnetId=subnet_id,
                 UserData=user_data,
                 MinCount=1,
                 MaxCount=1,
@@ -149,6 +153,7 @@ class AWSProvider(CloudProvider):
                 "status": "deployed",
                 "instance_id": instance_id,
                 "public_ip": public_ip,
+                "selected_subnet_id": subnet_id,
                 "endpoints": endpoints,
                 "service_endpoints": endpoints,
                 "generated_commands": generated_commands,
@@ -168,11 +173,29 @@ class AWSProvider(CloudProvider):
                 "provider": self.name,
                 "status": "failed",
                 "message": str(exc),
+                "action_hint": (
+                    "Verify AMI, subnet/AZ instance type support, security group ingress on port 80, "
+                    "key pair, IAM permissions, and AWS free-tier limits."
+                ),
                 "logs": [str(exc)],
                 "generated_commands": generated_commands,
                 "endpoints": [],
                 "service_endpoints": [],
             }
+
+    def _select_supported_subnet(self, ec2: Any) -> str:
+        if self.subnet_id and self._subnet_supports_instance_type(ec2, self.subnet_id):
+            return self.subnet_id
+
+        for subnet in self._default_vpc_subnets(ec2):
+            subnet_id = subnet.get("SubnetId")
+            if subnet_id and self._subnet_supports_instance_type(ec2, subnet_id):
+                return subnet_id
+
+        raise RuntimeError(
+            f"No subnet in the configured/default VPC supports instance type {self.instance_type}. "
+            "Choose another AWS_INSTANCE_TYPE or configure a supported AWS_SUBNET_ID."
+        )
 
     def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
         instance_id = deployment_record.get("instance_id")
@@ -215,12 +238,17 @@ class AWSProvider(CloudProvider):
 
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
         endpoints = result.get("service_endpoints") or []
-        urls = [endpoint["url"] for endpoint in endpoints if endpoint.get("url")]
+        urls = [_health_url(endpoint["url"], result.get("health_check_path", "/")) for endpoint in endpoints if endpoint.get("url")]
 
         if result.get("status") != "deployed" or not urls:
             return {
+                "result": "skipped",
                 "status": "skipped",
                 "passed": None,
+                "url": None,
+                "status_code": None,
+                "response_time_ms": None,
+                "attempts": 0,
                 "message": "Health check skipped because no public deployment endpoint is available.",
             }
 
@@ -228,19 +256,31 @@ class AWSProvider(CloudProvider):
             import requests
         except ImportError:
             return {
+                "result": "skipped",
                 "status": "skipped",
                 "passed": None,
+                "url": urls[0] if urls else None,
+                "status_code": None,
+                "response_time_ms": None,
+                "attempts": 0,
                 "message": "Health check skipped because the requests package is not installed.",
             }
 
         deadline = time.time() + self.timeout_seconds
         last_error = None
+        attempts = 0
+        last_status_code = None
+        last_response_time_ms = None
 
         while time.time() < deadline:
             passed = True
             for url in urls:
                 try:
+                    attempts += 1
+                    started = time.perf_counter()
                     response = requests.get(url, timeout=5)
+                    last_response_time_ms = round((time.perf_counter() - started) * 1000, 2)
+                    last_status_code = response.status_code
                     if response.status_code >= 400:
                         passed = False
                         last_error = f"{url} returned HTTP {response.status_code}."
@@ -252,16 +292,44 @@ class AWSProvider(CloudProvider):
 
             if passed:
                 return {
+                    "result": "passed",
                     "status": "passed",
                     "passed": True,
+                    "url": urls[0],
+                    "status_code": last_status_code,
+                    "response_time_ms": last_response_time_ms,
+                    "attempts": attempts,
                     "message": "All public endpoints responded successfully.",
                 }
             time.sleep(5)
 
         return {
+            "result": "failed",
             "status": "failed",
             "passed": False,
+            "url": urls[0],
+            "status_code": last_status_code,
+            "response_time_ms": last_response_time_ms,
+            "attempts": attempts,
             "message": last_error or "Timed out waiting for public endpoints to respond.",
+        }
+
+    def get_logs(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        instance_id = deployment_record.get("instance_id")
+        commands = []
+        if instance_id:
+            commands.append(
+                {
+                    "label": "EC2 console output",
+                    "command": ["aws", "ec2", "get-console-output", "--instance-id", instance_id],
+                    "command_string": f"aws ec2 get-console-output --instance-id {shlex.quote(instance_id)}",
+                }
+            )
+        return {
+            "provider": self.name,
+            "status": "plan_only",
+            "commands": commands,
+            "message": "AWS logs are not fetched automatically. Check EC2 user-data logs at /var/log/cloud-init-output.log or use SSH/SSM.",
         }
 
     def _missing_config(self) -> List[str]:
@@ -281,6 +349,30 @@ class AWSProvider(CloudProvider):
             raise RuntimeError("boto3 is required for AWS deployment. Run pip install -r requirements.txt.") from exc
         return boto3.client("ec2", region_name=self.region)
 
+    def _subnet_supports_instance_type(self, ec2: Any, subnet_id: str) -> bool:
+        try:
+            subnet = ec2.describe_subnets(SubnetIds=[subnet_id])["Subnets"][0]
+            availability_zone = subnet["AvailabilityZone"]
+            offerings = ec2.describe_instance_type_offerings(
+                LocationType="availability-zone",
+                Filters=[
+                    {"Name": "instance-type", "Values": [self.instance_type]},
+                    {"Name": "location", "Values": [availability_zone]},
+                ],
+            )
+            return bool(offerings.get("InstanceTypeOfferings"))
+        except Exception:
+            return False
+
+    def _default_vpc_subnets(self, ec2: Any) -> List[Dict[str, Any]]:
+        try:
+            vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}]).get("Vpcs", [])
+            if not vpcs:
+                return []
+            return ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpcs[0]["VpcId"]]}]).get("Subnets", [])
+        except Exception:
+            return []
+
     def _build_user_data(self, services: List[Dict[str, Any]]) -> str:
         lines = [
             "#!/bin/bash",
@@ -296,6 +388,7 @@ class AWSProvider(CloudProvider):
             container_name = _safe_name(service["name"])
             image = shlex.quote(service["image"])
             port = int(service["port"])
+            host_port = _host_port(service)
 
             lines.extend(
                 [
@@ -304,7 +397,7 @@ class AWSProvider(CloudProvider):
                     (
                         "docker run -d "
                         f"--name {container_name} "
-                        f"-p {port}:{port} "
+                        f"-p {host_port}:{port} "
                         "--restart unless-stopped "
                         f"{image}"
                     ),
@@ -319,6 +412,10 @@ def _safe_name(value: str) -> str:
     return cleaned[:60] or "app"
 
 
+def _host_port(service: Dict[str, Any]) -> int:
+    return 80 if service.get("public") else int(service["port"])
+
+
 def _service_endpoints(public_ip: str, services: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not public_ip:
         return []
@@ -328,12 +425,19 @@ def _service_endpoints(public_ip: str, services: List[Dict[str, Any]]) -> List[D
         if not service.get("public"):
             continue
         port = int(service["port"])
-        suffix = "" if port == 80 else f":{port}"
         endpoints.append(
             {
                 "name": service["name"],
-                "url": f"http://{public_ip}{suffix}",
-                "port": port,
+                "url": f"http://{public_ip}",
+                "port": 80,
+                "container_port": port,
             }
         )
     return endpoints
+
+
+def _health_url(url: str, path: str) -> str:
+    if not path or path == "/":
+        return url
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(path=path, query="", fragment=""))

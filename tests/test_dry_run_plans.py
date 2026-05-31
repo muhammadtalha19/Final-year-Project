@@ -255,16 +255,17 @@ def test_azure_deploy_uses_subprocess_argument_list_when_allowed(monkeypatch):
     assert result["public_endpoints"][0]["url"] == "https://manual-azure-app.example.azurecontainerapps.io"
 
 
-def test_gcp_real_mode_remains_blocked_and_no_command_runs(monkeypatch):
+def test_gcp_real_mode_not_ready_does_not_run_command(monkeypatch):
     monkeypatch.setenv("ENABLE_REAL_DEPLOYMENT", "true")
     monkeypatch.setenv("ALLOW_GCP_DEPLOYMENT", "true")
+    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("gcloud should not run")))
 
     result = orchestrator.deploy_app(_manual_config("GCP"))
 
-    assert result["status"] == "blocked_by_safety_flag"
+    assert result["status"] == "provider_not_ready"
     assert result["deployment"]["provider"] == "GCP"
-    assert "not implemented" in result["deployment"]["message"]
+    assert "not ready" in result["deployment"]["message"]
 
 
 def test_orchestrator_does_not_generate_plan_when_manual_selection_is_blocked(monkeypatch):

@@ -86,14 +86,14 @@ def test_azure_readiness_with_env_vars_returns_ready(monkeypatch):
     assert result["missing"] == []
 
 
-def test_gcp_readiness_says_real_deployment_not_implemented(monkeypatch):
+def test_gcp_readiness_with_env_vars_returns_ready(monkeypatch):
     monkeypatch.setenv("GCP_PROJECT_ID", "fyp-project")
     monkeypatch.setenv("GCP_REGION", "asia-south1")
     monkeypatch.setenv("GCP_PLATFORM", "managed")
 
     result = check_provider_readiness("GCP", _config("GCP"))
 
-    assert result["ready"] is False
+    assert result["ready"] is True
     assert result["ready_for_dry_run"] is True
-    assert result["ready_for_real_deploy"] is False
-    assert any("not implemented" in check["message"] for check in result["checks"])
+    assert result["ready_for_real_deploy"] is True
+    assert any("implemented" in check["message"] for check in result["checks"])

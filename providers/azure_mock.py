@@ -3,6 +3,7 @@ import shlex
 import subprocess
 import time
 from typing import Any, Dict
+from urllib.parse import urlparse, urlunparse
 
 from config_schema import get_service_definitions
 from decision_engine import PROVIDER_CATALOG
@@ -65,6 +66,7 @@ class AzureMockProvider(CloudProvider):
             "location": self.location,
             "resource_group": self.resource_group,
             "containerapp_environment": self.containerapp_env,
+            "resources": config.get("resources", {}),
             "required_env_vars": ["AZURE_RESOURCE_GROUP", "AZURE_CONTAINERAPP_ENV", "AZURE_LOCATION"],
             "generated_commands": commands,
             "message": "Azure Container Apps dry-run plan generated. No az command was executed.",
@@ -81,6 +83,7 @@ class AzureMockProvider(CloudProvider):
                 "status": "configuration_error",
                 "missing_vars": missing,
                 "message": "Missing Azure environment variables: " + ", ".join(missing),
+                "action_hint": "Fill AZURE_RESOURCE_GROUP, AZURE_LOCATION, and AZURE_CONTAINERAPP_ENV in .env.",
                 "logs": [],
                 "generated_commands": [],
                 "endpoints": [],
@@ -134,6 +137,7 @@ class AzureMockProvider(CloudProvider):
                 "provider": self.name,
                 "status": "failed",
                 "message": exc.stderr or str(exc),
+                "action_hint": "Run az login, install/update the containerapp extension, and verify the resource group and Container Apps environment.",
                 "generated_commands": commands,
                 "raw_output": {
                     "stdout": exc.stdout,
@@ -206,12 +210,17 @@ class AzureMockProvider(CloudProvider):
 
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
         endpoints = result.get("service_endpoints") or result.get("endpoints") or []
-        urls = [endpoint["url"] for endpoint in endpoints if endpoint.get("url")]
+        urls = [_health_url(endpoint["url"], result.get("health_check_path", "/")) for endpoint in endpoints if endpoint.get("url")]
 
         if result.get("status") != "deployed" or not urls:
             return {
+                "result": "skipped",
                 "status": "skipped",
                 "passed": None,
+                "url": None,
+                "status_code": None,
+                "response_time_ms": None,
+                "attempts": 0,
                 "message": "Health check skipped because no public deployment endpoint is available.",
             }
 
@@ -219,19 +228,39 @@ class AzureMockProvider(CloudProvider):
             import requests
         except ImportError:
             return {
+                "result": "skipped",
                 "status": "skipped",
                 "passed": None,
+                "url": urls[0] if urls else None,
+                "status_code": None,
+                "response_time_ms": None,
+                "attempts": 0,
                 "message": "Health check skipped because the requests package is not installed.",
             }
 
         last_error = None
+        attempts = 0
+        last_status_code = None
+        last_response_time_ms = None
         for _ in range(3):
             try:
-                responses = [requests.get(url, timeout=5) for url in urls]
+                responses = []
+                for url in urls:
+                    attempts += 1
+                    started = time.perf_counter()
+                    response = requests.get(url, timeout=5)
+                    last_response_time_ms = round((time.perf_counter() - started) * 1000, 2)
+                    last_status_code = response.status_code
+                    responses.append(response)
                 if all(response.status_code < 400 for response in responses):
                     return {
+                        "result": "passed",
                         "status": "passed",
                         "passed": True,
+                        "url": urls[0],
+                        "status_code": last_status_code,
+                        "response_time_ms": last_response_time_ms,
+                        "attempts": attempts,
                         "message": "All public endpoints responded successfully.",
                     }
                 last_error = "One or more endpoints returned HTTP 400 or higher."
@@ -240,9 +269,53 @@ class AzureMockProvider(CloudProvider):
             time.sleep(3)
 
         return {
+            "result": "failed",
             "status": "failed",
             "passed": False,
+            "url": urls[0],
+            "status_code": last_status_code,
+            "response_time_ms": last_response_time_ms,
+            "attempts": attempts,
             "message": last_error or "Timed out waiting for public endpoints to respond.",
+        }
+
+    def get_logs(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        app_names = deployment_record.get("app_names") or []
+        if not app_names and deployment_record.get("app_name"):
+            app_names = [_safe_name(deployment_record["app_name"])]
+        commands = [
+            {
+                "label": f"Azure logs for {app_name}",
+                "command": [
+                    "az",
+                    "containerapp",
+                    "logs",
+                    "show",
+                    "--name",
+                    app_name,
+                    "--resource-group",
+                    self.resource_group or "<AZURE_RESOURCE_GROUP>",
+                ],
+                "command_string": shlex.join(
+                    [
+                        "az",
+                        "containerapp",
+                        "logs",
+                        "show",
+                        "--name",
+                        app_name,
+                        "--resource-group",
+                        self.resource_group or "<AZURE_RESOURCE_GROUP>",
+                    ]
+                ),
+            }
+            for app_name in app_names
+        ]
+        return {
+            "provider": self.name,
+            "status": "plan_only",
+            "commands": commands,
+            "message": "Azure log commands are generated only; no az logs command was executed.",
         }
 
     def _missing_config(self):
@@ -267,3 +340,10 @@ def _safe_name(value: str) -> str:
 def _is_public(config: Dict[str, Any], service: Dict[str, Any]) -> bool:
     requirements = config.get("requirements", {})
     return bool(requirements.get("public_access") or service.get("public"))
+
+
+def _health_url(url: str, path: str) -> str:
+    if not path or path == "/":
+        return url
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(path=path, query="", fragment=""))

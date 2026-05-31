@@ -48,7 +48,7 @@ def test_decision_engine_selects_lowest_cost_eligible_provider_when_uptime_is_sa
     decision = select_provider(_config(max_cost=20, min_uptime=99.9))
 
     assert decision["selected_provider"] == "GCP"
-    assert decision["execution_provider"] == "AWS"
+    assert decision["execution_provider"] == "GCP"
     assert decision["selection_mode"] == "auto"
     assert decision["manual_provider"] is None
     assert decision["recommended_provider"] == "GCP"

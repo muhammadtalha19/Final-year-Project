@@ -23,7 +23,20 @@ class CloudProvider(ABC):
 
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
         return {
+            "result": "skipped",
             "status": "skipped",
             "passed": None,
+            "url": None,
+            "status_code": None,
+            "response_time_ms": None,
+            "attempts": 0,
             "message": "Health check is not implemented for this provider.",
+        }
+
+    def get_logs(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "provider": self.name,
+            "status": "not_implemented",
+            "commands": [],
+            "message": "Log retrieval is not implemented for this provider.",
         }

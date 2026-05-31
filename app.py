@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 import yaml
 
 try:
@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover - dependency is installed in the project
         return None
 
 from deployment_history import load_deployment_history
-from orchestrator import delete_deployment, deploy_app
+from orchestrator import build_deployment_report, delete_deployment, deploy_app
 
 load_dotenv()
 
@@ -97,6 +97,14 @@ def history():
 def delete_saved_deployment(deployment_id):
     delete_result = delete_deployment(deployment_id)
     return render_template("index.html", delete_result=delete_result, history=load_deployment_history(), show_history=True)
+
+
+@app.route("/deployment-report/<deployment_id>", methods=["GET"])
+def deployment_report(deployment_id):
+    report = build_deployment_report(deployment_id)
+    if report is None:
+        return Response("Deployment report not found.\n", status=404, mimetype="text/plain")
+    return Response(report, mimetype="text/plain")
 
 
 def _apply_cloud_selection_override(deployment_config, cloud_selection):

@@ -123,19 +123,18 @@ def _gcp_readiness(config: Dict[str, Any]) -> Dict[str, Any]:
     checks.append(
         {
             "name": "GCP_REAL_DEPLOYMENT",
-            "status": "failed",
-            "message": "Real GCP deployment is not implemented; GCP is available for dry-run plans only.",
+            "status": "passed",
+            "message": "Real GCP Cloud Run deployment is implemented behind safety flags.",
         }
     )
-    warnings = ["GCP real deployment is not implemented in this project yet."]
     return {
         "provider": "GCP",
-        "ready": False,
+        "ready": not missing,
         "ready_for_dry_run": True,
-        "ready_for_real_deploy": False,
+        "ready_for_real_deploy": not missing,
         "checks": checks,
         "missing": missing,
-        "warnings": warnings,
+        "warnings": [],
     }
 
 
