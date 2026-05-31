@@ -11,3 +11,28 @@ def safe_test_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLOW_GCP_DEPLOYMENT", "false")
     monkeypatch.setenv("ALLOW_AZURE_DEPLOYMENT", "false")
     monkeypatch.setenv("DEPLOYMENT_HISTORY_FILE", str(tmp_path / "history.json"))
+    for name in [
+        "GITHUB_CLIENT_ID",
+        "GITHUB_CLIENT_SECRET",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "MICROSOFT_CLIENT_ID",
+        "MICROSOFT_CLIENT_SECRET",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
+    try:
+        import app as app_module
+        import auth as auth_module
+
+        app_module.app.config["TESTING"] = True
+        auth_module.oauth_clients.clear()
+        with app_module.app.app_context():
+            app_module.db.session.remove()
+            app_module.db.drop_all()
+            app_module.db.create_all()
+        yield
+        with app_module.app.app_context():
+            app_module.db.session.remove()
+    except ImportError:
+        yield

@@ -1,6 +1,7 @@
 from io import BytesIO
 
 import app as app_module
+from models import DeploymentRecord, User
 
 
 YAML_WITH_MANUAL_AZURE = b"""
@@ -12,7 +13,7 @@ selection:
   provider: Azure
 deployment:
   type: container
-  image: nginx
+  image: nginx:latest
   port: 80
 requirements:
   max_monthly_cost_usd: 20
@@ -28,7 +29,7 @@ app:
   environment: production
 deployment:
   type: container
-  image: nginx
+  image: nginx:latest
   port: 80
 requirements:
   max_monthly_cost_usd: 20
@@ -36,6 +37,15 @@ requirements:
   preferred_region: asia
   public_access: true
 """
+
+
+def _login_client():
+    client = app_module.app.test_client()
+    client.post(
+        "/register",
+        data={"name": "Tester", "email": "tester@example.com", "password": "secret123"},
+    )
+    return client
 
 
 def _post_deploy(client, yaml_bytes, cloud_selection):
@@ -49,12 +59,14 @@ def _post_deploy(client, yaml_bytes, cloud_selection):
     )
 
 
-def _fake_result(selection):
+def _fake_result(selection, status="dry_run"):
     return {
         "app": "ui-selection-test",
+        "app_type": "api",
+        "image": "nginx:latest",
         "environment": "production",
-        "status": "dry_run",
-        "deployment_mode": "dry_run",
+        "status": status,
+        "deployment_mode": "real" if status == "approval_required" else "dry_run",
         "validation_errors": [],
         "warnings": [],
         "decision": {
@@ -66,11 +78,16 @@ def _fake_result(selection):
             "reason": "test",
             "evaluated_providers": [],
         },
-        "deployment": {"status": "dry_run"},
+        "provider_readiness": {"ready": True, "checks": [], "missing": [], "warnings": []},
+        "docker_image_validation": {"valid": True, "errors": [], "warnings": [], "check_type": "syntax_only"},
+        "bootstrap_plan": {},
+        "approval": {"app_name": "ui-selection-test"} if status == "approval_required" else {},
+        "diagnostics": {},
+        "deployment": {"status": status, "message": "test"},
         "deployment_steps": [],
         "generated_commands": [],
         "public_endpoints": [],
-        "health_check": {"status": "skipped", "message": "test"},
+        "health_check": {"result": "skipped", "status": "skipped", "message": "test"},
     }
 
 
@@ -82,9 +99,7 @@ def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
         return _fake_result(config["selection"])
 
     monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
-    app_module.app.config["TESTING"] = True
-
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "yaml")
+    response = _post_deploy(_login_client(), YAML_WITH_MANUAL_AZURE, "yaml")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "Azure"}
@@ -93,9 +108,8 @@ def test_use_yaml_selection_preserves_yaml_selection_block(monkeypatch):
 def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "auto")
+    response = _post_deploy(_login_client(), YAML_WITH_MANUAL_AZURE, "auto")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "auto"}
@@ -104,9 +118,8 @@ def test_auto_dropdown_override_sets_selection_mode_auto(monkeypatch):
 def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "AWS")
+    response = _post_deploy(_login_client(), YAML_WITHOUT_SELECTION, "AWS")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "AWS"}
@@ -115,9 +128,8 @@ def test_aws_dropdown_override_sets_manual_aws(monkeypatch):
 def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "Azure")
+    response = _post_deploy(_login_client(), YAML_WITHOUT_SELECTION, "Azure")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "Azure"}
@@ -126,9 +138,8 @@ def test_azure_dropdown_override_sets_manual_azure(monkeypatch):
 def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITHOUT_SELECTION, "GCP")
+    response = _post_deploy(_login_client(), YAML_WITHOUT_SELECTION, "GCP")
 
     assert response.status_code == 200
     assert captured[0]["selection"] == {"mode": "manual", "provider": "GCP"}
@@ -137,16 +148,15 @@ def test_gcp_dropdown_override_sets_manual_gcp(monkeypatch):
 def test_existing_yaml_manual_selection_still_works_with_yaml_option(monkeypatch):
     captured = []
     monkeypatch.setattr(app_module, "deploy_app", lambda config, **kwargs: captured.append(config) or _fake_result(config["selection"]))
-    app_module.app.config["TESTING"] = True
 
-    response = _post_deploy(app_module.app.test_client(), YAML_WITH_MANUAL_AZURE, "yaml")
+    response = _post_deploy(_login_client(), YAML_WITH_MANUAL_AZURE, "yaml")
 
     assert response.status_code == 200
     assert captured[0]["selection"]["mode"] == "manual"
     assert captured[0]["selection"]["provider"] == "Azure"
 
 
-def test_confirm_real_deployment_route_uses_posted_config_payload(monkeypatch):
+def test_confirm_real_deployment_route_is_post_only_and_uses_saved_yaml(monkeypatch):
     captured = []
 
     def fake_deploy(config, **kwargs):
@@ -154,15 +164,21 @@ def test_confirm_real_deployment_route_uses_posted_config_payload(monkeypatch):
         return _fake_result(config["selection"])
 
     monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
-    app_module.app.config["TESTING"] = True
+    client = _login_client()
+    with app_module.app.app_context():
+        user = User.query.filter_by(email="tester@example.com").first()
+        record = DeploymentRecord(
+            user_id=user.id,
+            yaml_content=YAML_WITH_MANUAL_AZURE.decode("utf-8"),
+            result_json=_fake_result({"mode": "manual", "provider": "Azure"}, "approval_required"),
+        )
+        record.apply_result(record.result_json, yaml_content=record.yaml_content)
+        app_module.db.session.add(record)
+        app_module.db.session.commit()
+        record_id = record.id
 
-    response = app_module.app.test_client().post(
-        "/deploy",
-        data={
-            "confirm_real_deployment": "true",
-            "config_yaml": YAML_WITH_MANUAL_AZURE.decode("utf-8"),
-        },
-    )
+    assert client.get(f"/deployments/{record_id}/confirm").status_code == 405
+    response = client.post(f"/deployments/{record_id}/confirm")
 
     assert response.status_code == 200
     assert captured[0][0]["selection"] == {"mode": "manual", "provider": "Azure"}

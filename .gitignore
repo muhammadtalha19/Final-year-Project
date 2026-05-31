@@ -10,3 +10,9 @@ logs/.log
 .vscode/
 .pytest_cache/
 deployments.json
+instance/*.db
+*.db
+*.sqlite
+*.sqlite3
+client_secret*.json
+oauth*.json

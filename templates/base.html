@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ current_user.theme_preference if current_user.is_authenticated else 'system' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Multi-Cloud Orchestrator{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div class="brand">
+                <a class="brand-link" href="{{ url_for('landing') }}">YAML Cloud Orchestrator</a>
+                <p class="subtitle">Admin-controlled AWS, Azure, and GCP deployment portal</p>
+            </div>
+            <nav class="nav" aria-label="Primary navigation">
+                {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                    <a href="{{ url_for('deploy_new') }}">Deploy</a>
+                    <a href="{{ url_for('deployments') }}">History</a>
+                    <a href="{{ url_for('providers') }}">Providers</a>
+                    <a href="{{ url_for('templates_library') }}">Templates</a>
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a class="secondary" href="{{ url_for('logout') }}">Logout</a>
+                {% else %}
+                    <a href="{{ url_for('login') }}">Login</a>
+                    <a class="secondary" href="{{ url_for('register') }}">Register</a>
+                {% endif %}
+                <button type="button" class="theme-toggle" id="theme-toggle" data-authenticated="{{ 'true' if current_user.is_authenticated else 'false' }}">Theme</button>
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <section class="panel flash-panel" aria-label="Messages">
+                    {% for message in messages %}
+                        <p class="notice">{{ message }}</p>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

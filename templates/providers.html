@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Provider Readiness{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Model A</span>
+    <h1>Admin provider readiness</h1>
+    <p>Cloud credentials are configured by the administrator/server environment. User cloud secrets are never requested here.</p>
+    <h2>Safety Flags</h2>
+    <div class="summary-grid">
+        {% for name, value in safety_flags.items() %}
+            <div class="summary-card"><span class="label">{{ name }}</span><strong>{{ value }}</strong></div>
+        {% endfor %}
+    </div>
+</section>
+
+{% for item in readiness %}
+    <section class="panel">
+        <h2>{{ item.provider }}</h2>
+        <p><span class="status {{ status_class('deployed' if item.readiness.ready else 'provider_not_ready') }}">{{ 'Ready' if item.readiness.ready else 'Needs setup' }}</span></p>
+        {% if item.readiness.missing %}
+            <p><strong>Missing:</strong> {{ item.readiness.missing | join(', ') }}</p>
+        {% endif %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+                <tbody>
+                    {% for check in item.readiness.checks %}
+                        <tr><td>{{ check.name }}</td><td><span class="status {{ status_class('deployed' if check.status == 'passed' else 'provider_not_ready' if check.status == 'failed' else 'approval_required') }}">{{ check.status }}</span></td><td>{{ check.message }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if item.bootstrap_plan %}
+            <h3>Bootstrap suggestions</h3>
+            <p>{{ item.bootstrap_plan.message }}</p>
+            <pre>{% for command in item.bootstrap_plan.commands %}{{ command }}
+{% endfor %}</pre>
+        {% endif %}
+    </section>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,163 @@
+{% set decision = result.get('decision', {}) %}
+{% set deployment = result.get('deployment', {}) %}
+{% set health = result.get('health_check', {}) %}
+{% set diagnostics = result.get('diagnostics', {}) %}
+
+<section class="summary-grid">
+    <div class="summary-card"><span class="label">Selected Provider</span><strong>{{ decision.get('selected_provider') or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Deployment Mode</span><strong>{{ result.get('deployment_mode') or record.deployment_mode or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Status</span><span class="status {{ status_class(result.get('status') or record.status) }}">{{ result.get('status') or record.status or 'unknown' }}</span></div>
+    <div class="summary-card"><span class="label">Public URL</span>{% if record.endpoint %}<a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a>{% else %}N/A{% endif %}</div>
+    <div class="summary-card"><span class="label">Health</span><strong>{{ health.get('result') or health.get('status') or record.health_status or 'N/A' }}</strong></div>
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>Selection</h2>
+        <div class="meta">
+            <div><span class="label">Selection Mode</span>{{ decision.get('selection_mode') or 'N/A' }}</div>
+            <div><span class="label">Manual Provider</span>{{ decision.get('manual_provider') or 'N/A' }}</div>
+            <div><span class="label">Recommended Provider</span>{{ decision.get('recommended_provider') or 'N/A' }}</div>
+            <div><span class="label">Execution Provider</span>{{ decision.get('execution_provider') or 'N/A' }}</div>
+        </div>
+        <p>{{ decision.get('reason') or deployment.get('message') or 'No decision reason available.' }}</p>
+    </article>
+
+    <article class="panel">
+        <h2>Docker Image Validation</h2>
+        {% set image_validation = result.get('docker_image_validation', {}) %}
+        <p><span class="status {{ status_class('deployed' if image_validation.get('valid', True) else 'image_validation_failed') }}">{{ 'valid' if image_validation.get('valid', True) else 'failed' }}</span></p>
+        <p><strong>Check:</strong> {{ image_validation.get('check_type') or image_validation.get('mode') or 'syntax_only' }}</p>
+        {% for error in image_validation.get('errors', []) %}<p class="notice danger-note">{{ error }}</p>{% endfor %}
+        {% for warning in image_validation.get('warnings', []) %}<p class="notice">{{ warning }}</p>{% endfor %}
+    </article>
+</section>
+
+<section class="panel">
+    <h2>Provider Readiness</h2>
+    {% set readiness = result.get('provider_readiness', {}) %}
+    {% if readiness %}
+        <p><span class="status {{ status_class('deployed' if readiness.get('ready') else 'provider_not_ready') }}">{{ 'Ready' if readiness.get('ready') else 'Needs setup or dry-run only' }}</span></p>
+        {% if readiness.get('missing') %}<p><strong>Missing:</strong> {{ readiness.get('missing') | join(', ') }}</p>{% endif %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+                <tbody>
+                    {% for check in readiness.get('checks', []) %}
+                        <tr><td>{{ check.get('name') }}</td><td>{{ check.get('status') }}</td><td>{{ check.get('message') }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty">No readiness data recorded.</p>
+    {% endif %}
+</section>
+
+{% if result.get('approval') or result.get('status') == 'approval_required' %}
+<section class="panel">
+    <h2>Approval</h2>
+    <p class="notice danger-note">Real cloud resources may be created only after confirmation. Server-side safety flags remain the authority.</p>
+    {% if result.get('approval') %}
+        <div class="meta">
+            {% for key, value in result.get('approval', {}).items() %}
+                <div><span class="label">{{ key.replace('_', ' ') }}</span>{{ value }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    {% if result.get('status') == 'approval_required' %}
+        <form method="post" action="{{ url_for('confirm_deployment', deployment_id=record.id) }}">
+            <button type="submit">Confirm Real Deployment</button>
+        </form>
+    {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+    <h2>Provider Evaluation</h2>
+    {% if decision.get('evaluated_providers') %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Provider</th><th>Eligible</th><th>Cost</th><th>Uptime</th><th>Score</th><th>Pricing Type</th><th>Pricing Source</th><th>Notes</th></tr>
+                </thead>
+                <tbody>
+                    {% for provider in decision.get('evaluated_providers', []) %}
+                        <tr>
+                            <td>{{ provider.get('provider') }}</td>
+                            <td>{{ provider.get('eligible') }}</td>
+                            <td>${{ provider.get('estimated_cost_usd') }}</td>
+                            <td>{{ provider.get('uptime_percent') }}%</td>
+                            <td>{{ provider.get('score') }}</td>
+                            <td>{{ provider.get('pricing_type') }}</td>
+                            <td>{{ provider.get('pricing_source') }}</td>
+                            <td>{{ provider.get('pricing_notes', []) | join('; ') }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty">No provider evaluation data recorded.</p>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h2>Deployment Status</h2>
+    <div class="meta">
+        <div><span class="label">Provider</span>{{ deployment.get('provider') or decision.get('execution_provider') or 'N/A' }}</div>
+        <div><span class="label">Status</span>{{ deployment.get('status') or result.get('status') or 'N/A' }}</div>
+        <div><span class="label">Message</span>{{ deployment.get('message') or 'N/A' }}</div>
+        <div><span class="label">Cleanup</span>{{ record.cleanup_status or result.get('cleanup_result', {}).get('status') or 'N/A' }}</div>
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Generated Commands</h2>
+    {% if result.get('generated_commands') %}
+        {% for command in result.get('generated_commands', []) %}
+            <pre>{{ command.get('command_string') or command.get('display') or (command.get('command', []) | join(' ')) }}</pre>
+        {% endfor %}
+    {% else %}
+        <p class="empty">No commands generated.</p>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h2>Public Endpoints</h2>
+    {% if result.get('public_endpoints') %}
+        {% for endpoint in result.get('public_endpoints', []) %}
+            <p><a href="{{ endpoint.get('url') }}" target="_blank" rel="noopener">{{ endpoint.get('url') }}</a></p>
+        {% endfor %}
+    {% elif record.endpoint %}
+        <p><a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a></p>
+    {% else %}
+        <p class="empty">No public endpoint recorded.</p>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <h2>Health Check</h2>
+    <div class="meta">
+        <div><span class="label">Result</span>{{ health.get('result') or health.get('status') or 'N/A' }}</div>
+        <div><span class="label">URL</span>{{ health.get('url') or 'N/A' }}</div>
+        <div><span class="label">Status Code</span>{{ health.get('status_code') or 'N/A' }}</div>
+        <div><span class="label">Attempts</span>{{ health.get('attempts') or 0 }}</div>
+        <div><span class="label">Message</span>{{ health.get('message') or 'N/A' }}</div>
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Diagnostics / Logs</h2>
+    {% if diagnostics %}
+        {% if diagnostics.get('action_hint') %}<p><strong>Action hint:</strong> {{ diagnostics.get('action_hint') }}</p>{% endif %}
+        {% if diagnostics.get('raw_error_summary') %}<p><strong>Error:</strong> {{ diagnostics.get('raw_error_summary') }}</p>{% endif %}
+        {% for message in diagnostics.get('provider_messages', []) %}<p>{{ message }}</p>{% endfor %}
+        {% for step in diagnostics.get('next_steps', []) %}<p>{{ step }}</p>{% endfor %}
+        {% for command in diagnostics.get('log_commands', []) %}
+            <pre>{{ command.get('command_string') or (command.get('command', []) | join(' ')) }}</pre>
+        {% endfor %}
+    {% else %}
+        <p class="empty">No diagnostics recorded.</p>
+    {% endif %}
+</section>

@@ -1,8 +1,12 @@
 Flask
+Flask-Login
+Flask-SQLAlchemy
+SQLAlchemy
 PyYAML
 boto3
 botocore
 python-dotenv
 pydantic
 requests
+Authlib
 pytest

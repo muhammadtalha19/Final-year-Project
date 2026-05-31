@@ -336,6 +336,26 @@ def _approval_summary(
     }
 
 
+def cleanup_deployment_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    execution_provider = record.get("execution_provider") or record.get("provider")
+    status = record.get("status")
+    deployment_mode = record.get("deployment_mode")
+
+    if deployment_mode != "real" or status not in {"deployed", "delete_failed"}:
+        return {
+            "provider": execution_provider,
+            "status": "delete_skipped",
+            "message": "Cleanup skipped because this record is not an active real deployment.",
+        }
+    if execution_provider not in PROVIDERS:
+        return {
+            "provider": execution_provider,
+            "status": "delete_skipped",
+            "message": "Cleanup skipped because this provider does not have a cleanup backend.",
+        }
+    return _provider_instance(execution_provider).delete(record)
+
+
 def delete_deployment(deployment_id: str) -> Dict[str, Any]:
     record = get_deployment_record(deployment_id)
     if not record:
@@ -345,23 +365,7 @@ def delete_deployment(deployment_id: str) -> Dict[str, Any]:
             "message": "Cleanup skipped because the deployment record was not found.",
         }
 
-    execution_provider = record.get("execution_provider")
-    status = record.get("status")
-
-    if status not in {"deployed", "delete_failed"}:
-        delete_result = {
-            "provider": execution_provider,
-            "status": "delete_skipped",
-            "message": "Cleanup skipped because this record is not an active real deployment.",
-        }
-    elif execution_provider not in {"AWS", "Azure", "GCP"}:
-        delete_result = {
-            "provider": execution_provider,
-            "status": "delete_skipped",
-            "message": "Cleanup skipped because this provider does not have a cleanup backend.",
-        }
-    else:
-        delete_result = _provider_instance(execution_provider).delete(record)
+    delete_result = cleanup_deployment_record(record)
 
     update_deployment_record(
         deployment_id,

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Settings</span>
+    <h1>Profile</h1>
+    <div class="meta">
+        <div><span class="label">Name</span>{{ current_user.name }}</div>
+        <div><span class="label">Email</span>{{ current_user.email }}</div>
+        <div><span class="label">Auth Provider</span>{{ current_user.auth_provider }}</div>
+        <div><span class="label">Theme</span>{{ current_user.theme_preference }}</div>
+        <div><span class="label">Created</span>{{ format_dt(current_user.created_at) }}</div>
+        <div><span class="label">Last Login</span>{{ format_dt(current_user.last_login_at) }}</div>
+    </div>
+    {% if current_user.avatar_url %}
+        <img class="avatar" src="{{ current_user.avatar_url }}" alt="User avatar">
+    {% endif %}
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>Display and Theme</h2>
+        <form method="post" class="stack-form">
+            <input type="hidden" name="action" value="profile">
+            <label>Name
+                <input type="text" name="name" value="{{ current_user.name }}" required>
+            </label>
+            <label>Theme preference
+                <select name="theme_preference">
+                    {% for theme in ['system', 'light', 'dark'] %}
+                        <option value="{{ theme }}" {% if current_user.theme_preference == theme %}selected{% endif %}>{{ theme }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button type="submit">Save Settings</button>
+        </form>
+    </article>
+    <article class="panel">
+        <h2>Password</h2>
+        {% if current_user.password_hash %}
+            <form method="post" class="stack-form">
+                <input type="hidden" name="action" value="password">
+                <label>Current password
+                    <input type="password" name="current_password" required>
+                </label>
+                <label>New password
+                    <input type="password" name="new_password" minlength="8" required>
+                </label>
+                <button type="submit">Change Password</button>
+            </form>
+        {% else %}
+            <p>Password managed by provider.</p>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

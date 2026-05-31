@@ -1,0 +1,50 @@
+{% set records = deployments if deployments is defined else latest %}
+{% if records %}
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>App</th>
+                <th>Type</th>
+                <th>Provider</th>
+                <th>Mode</th>
+                <th>Status</th>
+                <th>Endpoint</th>
+                <th>Cleanup</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for record in records %}
+                <tr>
+                    <td>{{ format_dt(record.created_at) }}</td>
+                    <td>{{ record.app_name or 'N/A' }}</td>
+                    <td>{{ record.app_type or 'api' }}</td>
+                    <td>{{ record.execution_provider or record.selected_provider or 'N/A' }}</td>
+                    <td>{{ record.deployment_mode or 'N/A' }}</td>
+                    <td><span class="status {{ status_class(record.status) }}">{{ record.status or 'unknown' }}</span></td>
+                    <td>{% if record.endpoint %}<a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a>{% else %}N/A{% endif %}</td>
+                    <td>
+                        {% if record.auto_cleanup_at %}{{ format_dt(record.auto_cleanup_at) }}{% else %}none{% endif %}
+                        {% if record.cleanup_status %}<br>{{ record.cleanup_status }}{% endif %}
+                    </td>
+                    <td>
+                        <div class="action-list">
+                            <a class="button secondary" href="{{ url_for('deployment_detail', deployment_id=record.id) }}">View</a>
+                            <a class="button secondary" href="{{ url_for('deployment_report', deployment_id=record.id) }}">Report</a>
+                            {% if record.deployment_mode == 'real' and record.status == 'deployed' %}
+                                <form class="inline-form" method="post" action="{{ url_for('delete_saved_deployment', deployment_id=record.id) }}">
+                                    <button type="submit" class="delete-button">Delete</button>
+                                </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+    <p class="empty">No deployments yet.</p>
+{% endif %}

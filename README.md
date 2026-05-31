@@ -8,6 +8,8 @@ This project lets a non-DevOps user upload a YAML file that describes an applica
 
 This project evaluates AWS, GCP, and Azure using a provider catalog. The current real execution backends support AWS EC2 Docker, Azure Container Apps, and GCP Cloud Run behind safety flags and an approval gate.
 
+The portal uses Model A: admin-controlled cloud deployment. Users register/login and manage their own YAML submissions and deployment records, but cloud credentials remain server-side in `.env` or the server environment. Users must not enter AWS, Azure, or GCP secrets.
+
 ## Problem Statement
 
 Small teams and non-DevOps users often struggle to decide where to deploy containerized applications while balancing cost and reliability. Manual provider comparison and infrastructure setup can be error-prone. This project explores whether a YAML-driven orchestrator can simplify deployment decisions and automate the first execution path.
@@ -23,6 +25,8 @@ User YAML Upload
       |
       v
 Flask Dashboard (app.py)
+      |
+      +--> Auth, Sessions, Portal Pages (Flask-Login, SQLite)
       |
       v
 YAML Validation (config_schema.py)
@@ -53,12 +57,16 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in AWS values in `.env` only when you intend to run the real AWS backend. Do not commit `.env`, `.pem`, logs, caches, or virtual environments.
+The development SQLite database is created automatically under `instance/orchestrator.db` on app startup. You can also point `DATABASE_URL` at another SQLite file for local experiments.
+
+Fill in cloud values in `.env` only when you intend to test a real backend. Do not commit `.env`, OAuth client secrets, `.pem`, logs, caches, database files, or virtual environments.
 
 ## Environment Variables
 
 ```text
 FLASK_ENV=development
+SECRET_KEY=
+DATABASE_URL=
 AWS_REGION=
 AWS_AMI_ID=
 AWS_INSTANCE_TYPE=t3.micro
@@ -79,6 +87,13 @@ GCP_PLATFORM=managed
 AZURE_RESOURCE_GROUP=
 AZURE_LOCATION=eastus
 AZURE_CONTAINERAPP_ENV=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001
 ```
 
 Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
@@ -86,6 +101,61 @@ Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`
 Required for real Azure Container Apps deployment: `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, and `AZURE_CONTAINERAPP_ENV`.
 
 Required for real GCP Cloud Run deployment: `GCP_PROJECT_ID`, `GCP_REGION`, and `GCP_PLATFORM`.
+
+OAuth client IDs/secrets are optional. If a provider is not configured, its login button is shown as unavailable and the app still starts normally.
+
+Local OAuth callback URLs:
+
+```text
+http://127.0.0.1:5001/auth/github/callback
+http://127.0.0.1:5001/auth/google/callback
+http://127.0.0.1:5001/auth/microsoft/callback
+```
+
+## Authenticated Portal
+
+The Flask UI is organized as a small multi-page portal:
+
+- `/` public landing page
+- `/register`, `/login`, `/logout`
+- `/auth/github`, `/auth/google`, `/auth/microsoft` and matching callback routes
+- `/dashboard` user analytics and latest deployments
+- `/deploy/new` YAML upload/paste form with provider selector
+- `/templates` built-in YAML templates
+- `/deployments` user-specific history
+- `/deployments/<id>` deployment details
+- `/deployment-report/<id>` plain text report
+- `/providers` admin/server provider readiness and bootstrap suggestions
+- `/settings` profile, theme, and password settings
+
+Email/password login uses Werkzeug password hashing. OAuth login uses Authlib and stores only provider name, provider user ID, profile metadata, and timestamps; OAuth access tokens are not stored. Users can see, refresh, report, and delete only their own deployment records.
+
+## OAuth Setup
+
+Create OAuth applications in GitHub, Google, and Microsoft Entra ID/Azure Portal as needed, then set the matching variables in `.env`. Keep these values server-side only.
+
+```text
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+```
+
+Use `OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001` when running locally on port `5001`, or set it to your deployed portal origin.
+
+## Portal UX Features
+
+The portal uses responsive, mobile-first templates with no external CSS framework. The dashboard cards, deployment history, provider evaluation tables, generated commands, YAML blocks, diagnostics, and reports adapt for desktop, laptop, tablet, and mobile screens.
+
+Dark mode is controlled with CSS variables and a navbar toggle. The preference is saved in browser `localStorage`; authenticated users can also save `system`, `light`, or `dark` in `/settings`.
+
+The template library provides starter YAML for static web apps, FastAPI APIs, ML APIs, manual AWS, manual Azure, manual GCP, and auto provider selection. `/deploy/new` supports file upload or pasted YAML; if both are provided, the textarea YAML is used.
+
+Deployment analytics are calculated per user and include totals, dry-runs, real deployments, deployed/failed/deleted counts, provider breakdown, app type breakdown, and the latest five records.
+
+Status refresh is available for owned real deployment records. Dry-run, failed, and deleted records refresh safely without cloud API calls. Auto-cleanup metadata can store a future cleanup time, but no background worker is implemented.
 
 ## YAML Schema Examples
 
@@ -173,7 +243,7 @@ Real deployment is still controlled only by `.env` safety flags such as `ENABLE_
 flask run
 ```
 
-Open the Flask URL, upload one of the files in `examples/`, and review the selected provider, execution provider, scoring table, deployment status, endpoint, and health-check result.
+Open the Flask URL, create an account, upload one of the files in `examples/`, and review the selected provider, execution provider, scoring table, deployment status, endpoint, health-check result, diagnostics, and report.
 
 ## Decision Engine
 
@@ -248,7 +318,7 @@ Dry-run remains the default and does not require approval. When real deployment 
 
 Readiness checks catch missing cloud setup such as AWS EC2 variables, Azure Container Apps variables, and GCP Cloud Run variables. Docker image validation catches empty images and placeholder values such as `YOUR_DOCKERHUB_USERNAME`; images without tags are shown as warnings.
 
-Real deployment proceeds only when `.env` safety flags are enabled, the selected provider is ready, the Docker image validation passes, and the user confirms the approval step in the dashboard. Use cleanup after real deployments, then verify the AWS or Azure console to confirm resources were removed.
+Real deployment proceeds only when `.env` safety flags are enabled, the selected provider is ready, the Docker image validation passes, and the user confirms the approval step in the dashboard. Use cleanup after real deployments, then verify the AWS, Azure, or GCP console to confirm resources were removed.
 
 Optional Docker Hub image existence checks are disabled by default:
 
@@ -266,7 +336,7 @@ When readiness fails, the dashboard shows a bootstrap suggestion plan. These com
 
 Cleanup is available only for stored real AWS, Azure, or GCP deployments. AWS cleanup terminates the recorded EC2 instance. Azure cleanup deletes the recorded Container App through the Azure CLI. GCP cleanup deletes the recorded Cloud Run service. Dry-run records do not create cloud resources and do not need deletion.
 
-After using cleanup, verify the result in the AWS or Azure console and confirm that associated billable resources no longer remain.
+After using cleanup, verify the result in the AWS, Azure, or GCP console and confirm that associated billable resources no longer remain.
 
 ## AWS Deployment
 
@@ -287,10 +357,10 @@ The repository does not build or push this image automatically.
 ## Tests
 
 ```bash
-pytest
+pytest -q
 ```
 
-The tests cover YAML validation, decision filtering, pricing fallback behavior, provider selection, dry-run command generation, readiness checks, approval gates, cleanup, diagnostics/reporting, and no-real-cloud-deployment guards.
+The tests cover YAML validation, decision filtering, pricing fallback behavior, provider selection, dry-run command generation, readiness checks, approval gates, cleanup, diagnostics/reporting, auth, OAuth mocked callbacks, owner-only records, settings, templates, refresh, auto-cleanup metadata, and no-real-cloud-deployment guards.
 
 ## Limitations
 
@@ -300,11 +370,13 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 - Dry-run commands are generated for demonstration and review; they are not executed by the dashboard.
 - EC2 networking, security group rules, IAM permissions, and image availability must be configured manually.
 - Health checks depend on the public endpoint becoming reachable within `DEPLOYMENT_TIMEOUT_SECONDS`.
+- OAuth providers require external configuration in the provider dashboards; local tests use mocks only.
+- Auto-cleanup is metadata/helper based and does not run a background worker.
 
 ## Future Work
 
 - Add richer deployment backends such as GCP Compute Engine, Azure VM, or Kubernetes.
 - Replace static provider data with live pricing and region availability.
-- Add authentication for dashboard access.
 - Add richer deployment logs and rollback handling.
-- Store history in SQLite for stronger querying and reporting.
+- Add database migrations, admin roles, and richer audit trails.
+- Add user-owned cloud accounts, OAuth cloud authorization, or per-user credentials as a future architecture model.
