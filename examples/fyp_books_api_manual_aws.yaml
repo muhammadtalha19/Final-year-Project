@@ -1,0 +1,18 @@
+app:
+  name: fyp-books-api
+  environment: production
+
+services:
+  - name: fyp-books-api
+    image: dockertalha19/fyp-books-api:latest
+    port: 8000
+    public: true
+    health_check: /health
+
+requirements:
+  max_monthly_cost_usd: 20
+  min_uptime: 99.0
+
+selection:
+  mode: manual
+  provider: AWS
