@@ -16,3 +16,16 @@ instance/*.db
 *.sqlite3
 client_secret*.json
 oauth*.json
+
+.env
+*.env
+*.db
+instance/*.db
+deployments.json
+*.pem
+*.key
+*.crt
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/

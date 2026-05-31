@@ -91,4 +91,4 @@ def _azure_region(region: str = "") -> str:
 
 
 def _live_pricing_enabled() -> bool:
-    return os.getenv("ENABLE_LIVE_PRICING", "false").strip().lower() == "true"
+    return os.getenv("ENABLE_LIVE_PRICING", "false").strip().lower() == "true" 
