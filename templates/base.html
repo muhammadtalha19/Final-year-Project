@@ -11,13 +11,14 @@
         <header class="topbar">
             <div class="brand">
                 <a class="brand-link" href="{{ url_for('landing') }}">YAML Cloud Orchestrator</a>
-                <p class="subtitle">Admin-controlled AWS, Azure, and GCP deployment portal</p>
+                <p class="subtitle">User-owned AWS, Azure, and GCP deployment portal</p>
             </div>
             <nav class="nav" aria-label="Primary navigation">
                 {% if current_user.is_authenticated %}
                     <a href="{{ url_for('dashboard') }}">Dashboard</a>
                     <a href="{{ url_for('deploy_new') }}">Deploy</a>
                     <a href="{{ url_for('deployments') }}">History</a>
+                    <a href="{{ url_for('cloud_accounts') }}">Cloud Accounts</a>
                     <a href="{{ url_for('providers') }}">Providers</a>
                     <a href="{{ url_for('templates_library') }}">Templates</a>
                     <a href="{{ url_for('settings') }}">Settings</a>

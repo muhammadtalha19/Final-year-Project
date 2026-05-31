@@ -2,9 +2,10 @@
 {% block title %}Provider Readiness{% endblock %}
 {% block content %}
 <section class="panel">
-    <span class="label">Model A</span>
-    <h1>Admin provider readiness</h1>
-    <p>Cloud credentials are configured by the administrator/server environment. User cloud secrets are never requested here.</p>
+    <span class="label">Model B</span>
+    <h1>Your provider readiness</h1>
+    <p>Deployments run in your connected cloud account. Saved credentials are encrypted and secrets are never shown here.</p>
+    <p><a href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a></p>
     <h2>Safety Flags</h2>
     <div class="summary-grid">
         {% for name, value in safety_flags.items() %}
@@ -16,6 +17,9 @@
 {% for item in readiness %}
     <section class="panel">
         <h2>{{ item.provider }}</h2>
+        {% if item.account %}
+            <p><strong>Account:</strong> {{ item.account.display_name }}{% if item.account.region %} · {{ item.account.region }}{% endif %}</p>
+        {% endif %}
         <p><span class="status {{ status_class('deployed' if item.readiness.ready else 'provider_not_ready') }}">{{ 'Ready' if item.readiness.ready else 'Needs setup' }}</span></p>
         {% if item.readiness.missing %}
             <p><strong>Missing:</strong> {{ item.readiness.missing | join(', ') }}</p>

@@ -29,6 +29,9 @@ def deploy_app(
     config: Dict[str, Any],
     execute: bool = True,
     confirm_real_deployment: bool = False,
+    cloud_account: Any = None,
+    cloud_accounts: Optional[Dict[str, Any]] = None,
+    require_cloud_account: bool = False,
 ) -> Dict[str, Any]:
     """
     Validate, decide, deploy through an implemented backend, run health checks,
@@ -120,15 +123,25 @@ def deploy_app(
         return _finalize_result(result)
 
     selected_provider = decision["selected_provider"]
-    provider_readiness = check_provider_readiness(selected_provider, validated)
+    selected_cloud_account = _cloud_account_for(selected_provider, cloud_account, cloud_accounts)
+    cloud_account_summary = _cloud_account_summary(selected_provider, selected_cloud_account)
+    provider_readiness = check_provider_readiness(
+        selected_provider,
+        validated,
+        cloud_account=selected_cloud_account,
+        require_cloud_account=require_cloud_account,
+    )
     result["provider_readiness"] = provider_readiness
+    result["cloud_account"] = cloud_account_summary
     if not provider_readiness.get("ready", False):
         result["bootstrap_plan"] = generate_provider_bootstrap_plan(selected_provider)
 
     if not _real_deployment_enabled():
         execution_provider = selected_provider
         provider = _provider_instance(execution_provider)
-        deployment = provider.generate_plan(validated)
+        deployment = _call_generate_plan(provider, validated, selected_cloud_account)
+        if require_cloud_account and not selected_cloud_account:
+            result["warnings"].append("Cloud account not connected. Real deployment will be blocked.")
         decision = _decision_for_selected_execution(
             decision,
             execution_provider,
@@ -176,7 +189,31 @@ def deploy_app(
         return _finalize_result(result)
 
     provider = _provider_instance(execution_provider)
-    plan = provider.generate_plan(validated)
+    plan = _call_generate_plan(provider, validated, selected_cloud_account)
+
+    if require_cloud_account and not selected_cloud_account:
+        deployment = {
+            **plan,
+            "status": "cloud_account_required",
+            "deployment_mode": "real",
+            "message": (
+                f"Connect your {execution_provider} cloud account before real deployment. "
+                "You can connect it from Cloud Accounts or choose a connected provider."
+            ),
+        }
+        result.update(
+            {
+                "status": "cloud_account_required",
+                "deployment_mode": "real",
+                "deployment": deployment,
+                "generated_commands": plan.get("generated_commands", []),
+                "health_check": _skipped_health("Health check skipped because no connected cloud account is available."),
+            }
+        )
+        result["deployment_steps"].append(f"Execution provider: {execution_provider}")
+        result["deployment_steps"].append(deployment["message"])
+        result["logs"] = list(result["deployment_steps"])
+        return _finalize_result(result)
 
     if not _provider_deployment_allowed(execution_provider):
         deployment = {
@@ -285,7 +322,7 @@ def deploy_app(
         result["logs"] = list(result["deployment_steps"])
         return _finalize_result(result)
 
-    deployment = provider.deploy(validated)
+    deployment = _call_provider_deploy(provider, validated, selected_cloud_account)
     deployment["health_check_path"] = validated.get("health_check", {}).get("path", "/")
     endpoints = deployment.get("service_endpoints", [])
     health_check = provider.health_check(deployment) if deployment.get("status") == "deployed" else _skipped_health(
@@ -336,7 +373,11 @@ def _approval_summary(
     }
 
 
-def cleanup_deployment_record(record: Dict[str, Any]) -> Dict[str, Any]:
+def cleanup_deployment_record(
+    record: Dict[str, Any],
+    cloud_account: Any = None,
+    require_cloud_account: bool = False,
+) -> Dict[str, Any]:
     execution_provider = record.get("execution_provider") or record.get("provider")
     status = record.get("status")
     deployment_mode = record.get("deployment_mode")
@@ -353,7 +394,14 @@ def cleanup_deployment_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "status": "delete_skipped",
             "message": "Cleanup skipped because this provider does not have a cleanup backend.",
         }
-    return _provider_instance(execution_provider).delete(record)
+    if require_cloud_account and cloud_account is None:
+        return {
+            "provider": execution_provider,
+            "status": "cloud_account_required",
+            "message": f"Cleanup blocked because the {execution_provider} cloud account is not connected.",
+        }
+    provider = _provider_instance(execution_provider)
+    return provider.delete(record, cloud_account) if cloud_account is not None else provider.delete(record)
 
 
 def delete_deployment(deployment_id: str) -> Dict[str, Any]:
@@ -475,6 +523,8 @@ def _next_steps_for_result(result: Dict[str, Any]) -> list[str]:
         return ["Replace placeholder or invalid Docker image references and upload the YAML again."]
     if status == "blocked_by_safety_flag":
         return ["Enable the matching ALLOW_*_DEPLOYMENT flag only when you intend to create real resources."]
+    if status == "cloud_account_required":
+        return ["Connect the selected cloud provider account, then retry or choose a connected provider."]
     if status == "deployed":
         return ["Verify the public endpoint, monitor billing, and use cleanup when the demo is complete."]
     if status == "dry_run":
@@ -525,6 +575,46 @@ def _provider_instance(provider_name: str):
     if not provider_cls:
         raise ValueError(f"Unsupported execution provider: {provider_name}")
     return provider_cls()
+
+
+def _cloud_account_for(provider_name: str, cloud_account: Any = None, cloud_accounts: Optional[Dict[str, Any]] = None) -> Any:
+    if cloud_accounts:
+        return cloud_accounts.get(provider_name)
+    if cloud_account is not None:
+        provider = getattr(cloud_account, "provider", None)
+        if not provider or provider == provider_name:
+            return cloud_account
+    return None
+
+
+def _cloud_account_summary(provider_name: str, cloud_account: Any = None) -> Dict[str, Any]:
+    if not cloud_account:
+        return {
+            "provider": provider_name,
+            "connected": False,
+            "status": "missing",
+            "message": "Cloud account not connected. Real deployment will be blocked.",
+        }
+    if hasattr(cloud_account, "masked_summary"):
+        summary = cloud_account.masked_summary()
+        for key in ["last_checked_at", "created_at"]:
+            if summary.get(key) is not None:
+                summary[key] = str(summary[key])
+    elif isinstance(cloud_account, dict):
+        summary = {"provider": provider_name, "connected": True, "status": "connected"}
+    else:
+        summary = {"provider": provider_name, "connected": True, "status": "connected"}
+    summary["connected"] = True
+    summary.setdefault("provider", provider_name)
+    return summary
+
+
+def _call_generate_plan(provider, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+    return provider.generate_plan(config, cloud_account) if cloud_account is not None else provider.generate_plan(config)
+
+
+def _call_provider_deploy(provider, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+    return provider.deploy(config, cloud_account) if cloud_account is not None else provider.deploy(config)
 
 
 def _skipped_health(message: str) -> Dict[str, Any]:

@@ -4,6 +4,22 @@
 <section class="panel">
     <span class="label">New Deployment</span>
     <h1>Upload or paste YAML</h1>
+    <div class="summary-grid">
+        {% for provider, account in (cloud_accounts or {}).items() %}
+            <div class="summary-card">
+                <span class="label">{{ provider }} Account</span>
+                <strong>{{ 'connected' if account.connected else 'not connected' }}</strong>
+                <p class="empty">
+                    {% if account.connected %}
+                        {{ account.display_name }}{% if account.region %} · {{ account.region }}{% endif %}
+                    {% else %}
+                        Real {{ provider }} deployment will be blocked.
+                    {% endif %}
+                </p>
+            </div>
+        {% endfor %}
+    </div>
+    <p><a href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a></p>
     {% if errors %}
         <div class="notice danger-note">
             {% for error in errors %}<p>{{ error }}</p>{% endfor %}

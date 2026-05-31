@@ -7,7 +7,7 @@
         <h1>Deploy container apps from YAML with safe multi-cloud controls.</h1>
         <p>
             Upload a YAML file, let the decision engine compare AWS, Azure, and GCP, review the dry-run plan,
-            and approve real deployment only when server-side safety flags allow it.
+            connect your own cloud account, and approve real deployment only when safety flags allow it.
         </p>
         <div class="action-list">
             {% if current_user.is_authenticated %}
@@ -28,7 +28,7 @@
     </article>
     <article class="panel">
         <h2>Safe by default</h2>
-        <p>Dry-run mode is the default. Real AWS EC2, Azure Container Apps, or GCP Cloud Run deployment requires environment flags and a POST approval step.</p>
+        <p>Dry-run mode is the default. Real AWS EC2, Azure Container Apps, or GCP Cloud Run deployment requires your connected cloud account, environment safety flags, and a POST approval step.</p>
     </article>
     <article class="panel">
         <h2>Operational output</h2>

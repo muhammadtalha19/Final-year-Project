@@ -29,12 +29,17 @@ class AWSProvider(CloudProvider):
         self.key_name = os.getenv("AWS_KEY_NAME")
         self.security_group_id = os.getenv("AWS_SECURITY_GROUP_ID")
         self.subnet_id = os.getenv("AWS_SUBNET_ID")
+        self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_session_token = os.getenv("AWS_SESSION_TOKEN")
+        self._using_cloud_account = False
         self.timeout_seconds = int(os.getenv("DEPLOYMENT_TIMEOUT_SECONDS", "180"))
 
     def estimate(self, config: Dict[str, Any]) -> Dict[str, Any]:
         return PROVIDER_CATALOG[self.name].copy()
 
-    def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_plan(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        values = self._values_for_account(cloud_account)
         services = get_service_definitions(config)
         first_service = services[0] if services else {}
         generated_commands = [
@@ -69,8 +74,8 @@ class AWSProvider(CloudProvider):
             "deployment_mode": "dry_run",
             "image": first_service.get("image"),
             "port": first_service.get("port"),
-            "region": self.region or "",
-            "instance_type": self.instance_type,
+            "region": values["region"] or "",
+            "instance_type": values["instance_type"],
             "resources": config.get("resources", {}),
             "required_env_vars": [
                 "AWS_REGION",
@@ -86,15 +91,16 @@ class AWSProvider(CloudProvider):
             "service_endpoints": [],
         }
 
-    def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def deploy(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         missing = self._missing_config()
         if missing:
             return {
                 "provider": self.name,
                 "status": "configuration_error",
                 "missing_vars": missing,
-                "message": "Missing AWS environment variables: " + ", ".join(missing),
-                "action_hint": "Fill the missing AWS variables in .env before enabling real AWS deployment.",
+                "message": "Missing AWS cloud account configuration: " + ", ".join(missing),
+                "action_hint": "Update your connected AWS account before enabling real AWS deployment.",
                 "logs": [],
                 "generated_commands": [],
                 "endpoints": [],
@@ -115,7 +121,7 @@ class AWSProvider(CloudProvider):
 
         app_name = config["app"]["name"]
         user_data = self._build_user_data(services)
-        generated_commands = self.generate_plan(config).get("generated_commands", [])
+        generated_commands = self.generate_plan(config, cloud_account).get("generated_commands", [])
 
         try:
             ec2 = self._client()
@@ -197,7 +203,8 @@ class AWSProvider(CloudProvider):
             "Choose another AWS_INSTANCE_TYPE or configure a supported AWS_SUBNET_ID."
         )
 
-    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+    def delete(self, deployment_record: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         instance_id = deployment_record.get("instance_id")
         if not instance_id:
             deployment = deployment_record.get("deployment", {})
@@ -340,6 +347,9 @@ class AWSProvider(CloudProvider):
             "AWS_SECURITY_GROUP_ID": self.security_group_id,
             "AWS_SUBNET_ID": self.subnet_id,
         }
+        if self._using_cloud_account:
+            required["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+            required["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
         return [name for name, value in required.items() if not value]
 
     def _client(self) -> Any:
@@ -347,7 +357,37 @@ class AWSProvider(CloudProvider):
             import boto3
         except ImportError as exc:
             raise RuntimeError("boto3 is required for AWS deployment. Run pip install -r requirements.txt.") from exc
+        if self.aws_access_key_id and self.aws_secret_access_key:
+            session = boto3.Session(
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                aws_session_token=self.aws_session_token,
+                region_name=self.region,
+            )
+            return session.client("ec2")
         return boto3.client("ec2", region_name=self.region)
+
+    def _apply_cloud_account(self, cloud_account: Any = None) -> None:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        if not credentials:
+            return
+        self._using_cloud_account = True
+        self.region = credentials.get("AWS_REGION") or self.region
+        self.ami_id = credentials.get("AWS_AMI_ID") or self.ami_id
+        self.instance_type = credentials.get("AWS_INSTANCE_TYPE") or self.instance_type
+        self.key_name = credentials.get("AWS_KEY_NAME") or self.key_name
+        self.security_group_id = credentials.get("AWS_SECURITY_GROUP_ID") or self.security_group_id
+        self.subnet_id = credentials.get("AWS_SUBNET_ID") or self.subnet_id
+        self.aws_access_key_id = credentials.get("AWS_ACCESS_KEY_ID") or self.aws_access_key_id
+        self.aws_secret_access_key = credentials.get("AWS_SECRET_ACCESS_KEY") or self.aws_secret_access_key
+        self.aws_session_token = credentials.get("AWS_SESSION_TOKEN") or self.aws_session_token
+
+    def _values_for_account(self, cloud_account: Any = None) -> Dict[str, Any]:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        return {
+            "region": credentials.get("AWS_REGION") or self.region,
+            "instance_type": credentials.get("AWS_INSTANCE_TYPE") or self.instance_type,
+        }
 
     def _subnet_supports_instance_type(self, ec2: Any, subnet_id: str) -> bool:
         try:
@@ -410,6 +450,16 @@ class AWSProvider(CloudProvider):
 def _safe_name(value: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9-]+", "-", value).strip("-").lower()
     return cleaned[:60] or "app"
+
+
+def _credentials_from_cloud_account(cloud_account: Any = None) -> Dict[str, Any]:
+    if not cloud_account:
+        return {}
+    if isinstance(cloud_account, dict):
+        return cloud_account
+    if hasattr(cloud_account, "get_credentials"):
+        return cloud_account.get_credentials()
+    return {}
 
 
 def _host_port(service: Dict[str, Any]) -> int:

@@ -8,7 +8,7 @@ This project lets a non-DevOps user upload a YAML file that describes an applica
 
 This project evaluates AWS, GCP, and Azure using a provider catalog. The current real execution backends support AWS EC2 Docker, Azure Container Apps, and GCP Cloud Run behind safety flags and an approval gate.
 
-The portal uses Model A: admin-controlled cloud deployment. Users register/login and manage their own YAML submissions and deployment records, but cloud credentials remain server-side in `.env` or the server environment. Users must not enter AWS, Azure, or GCP secrets.
+The portal now uses Model B: user-owned cloud accounts. Users register/login, connect their own AWS, Azure, or GCP account, and real deployments/cleanup run in that user's connected account. Dry-run mode still works without connected cloud accounts. Users own the deployed resources and any cloud billing.
 
 ## Problem Statement
 
@@ -59,7 +59,13 @@ cp .env.example .env
 
 The development SQLite database is created automatically under `instance/orchestrator.db` on app startup. You can also point `DATABASE_URL` at another SQLite file for local experiments.
 
-Fill in cloud values in `.env` only when you intend to test a real backend. Do not commit `.env`, OAuth client secrets, `.pem`, logs, caches, database files, or virtual environments.
+Set `CREDENTIAL_ENCRYPTION_KEY` before saving user cloud accounts. Do not commit `.env`, OAuth client secrets, cloud credentials, `.pem`, logs, caches, database files, or virtual environments.
+
+Generate an encryption key:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 ## Environment Variables
 
@@ -94,13 +100,18 @@ GOOGLE_CLIENT_SECRET=
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
 OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001
+CREDENTIAL_ENCRYPTION_KEY=
+MODEL_B_USER_CLOUD_ACCOUNTS=true
+ALLOW_ADMIN_CLOUD_FALLBACK=false
 ```
 
-Required for real AWS EC2 deployment: `AWS_REGION`, `AWS_AMI_ID`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
+In Model B, users normally enter provider configuration in `/cloud/accounts`. Admin/server env cloud values are used only when `ALLOW_ADMIN_CLOUD_FALLBACK=true`.
 
-Required for real Azure Container Apps deployment: `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, and `AZURE_CONTAINERAPP_ENV`.
+AWS connect fields: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, optional `AWS_AMI_ID`, `AWS_INSTANCE_TYPE`, `AWS_KEY_NAME`, `AWS_SECURITY_GROUP_ID`, and `AWS_SUBNET_ID`.
 
-Required for real GCP Cloud Run deployment: `GCP_PROJECT_ID`, `GCP_REGION`, and `GCP_PLATFORM`.
+Azure connect fields: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, and `AZURE_CONTAINERAPP_ENV`.
+
+GCP connect fields: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_PLATFORM`, and `GCP_SERVICE_ACCOUNT_JSON`.
 
 OAuth client IDs/secrets are optional. If a provider is not configured, its login button is shown as unavailable and the app still starts normally.
 
@@ -130,6 +141,21 @@ The Flask UI is organized as a small multi-page portal:
 
 Email/password login uses Werkzeug password hashing. OAuth login uses Authlib and stores only provider name, provider user ID, profile metadata, and timestamps; OAuth access tokens are not stored. Users can see, refresh, report, and delete only their own deployment records.
 
+## User-Owned Cloud Accounts
+
+`/cloud/accounts` lets each authenticated user connect one AWS, Azure, and GCP account. Credentials are encrypted with Fernet before storage. Plaintext secrets are never rendered in templates, reports, diagnostics, or history records.
+
+Real deployment requires:
+
+- `ENABLE_REAL_DEPLOYMENT=true`
+- the matching `ALLOW_*_DEPLOYMENT=true`
+- a connected account for the selected provider
+- provider readiness passed
+- Docker image validation passed
+- explicit deployment approval by POST
+
+If auto mode selects a provider that is not connected, real deployment is blocked with `cloud_account_required`. The user can connect that provider or manually choose a provider they already connected. Dry-run plans remain available without any connected cloud account.
+
 ## OAuth Setup
 
 Create OAuth applications in GitHub, Google, and Microsoft Entra ID/Azure Portal as needed, then set the matching variables in `.env`. Keep these values server-side only.
@@ -147,7 +173,7 @@ Use `OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001` when running locally on port
 
 ## Portal UX Features
 
-The portal uses responsive, mobile-first templates with no external CSS framework. The dashboard cards, deployment history, provider evaluation tables, generated commands, YAML blocks, diagnostics, and reports adapt for desktop, laptop, tablet, and mobile screens.
+The portal uses responsive, mobile-first templates with no external CSS framework. The dashboard cards, cloud account cards, deployment history, provider evaluation tables, generated commands, YAML blocks, diagnostics, and reports adapt for desktop, laptop, tablet, and mobile screens.
 
 Dark mode is controlled with CSS variables and a navbar toggle. The preference is saved in browser `localStorage`; authenticated users can also save `system`, `light`, or `dark` in `/settings`.
 
@@ -235,7 +261,7 @@ Manual provider values must be `AWS`, `GCP`, or `Azure`. Manual selection does n
 
 The deployment form includes a cloud provider dropdown. `Use YAML selection` leaves the uploaded YAML unchanged. Choosing `Auto select best provider`, `AWS`, `Azure`, or `GCP` writes the matching `selection` block before validation, so the UI choice overrides YAML only when a non-YAML option is selected.
 
-Real deployment is still controlled only by `.env` safety flags such as `ENABLE_REAL_DEPLOYMENT` and `ALLOW_AWS_DEPLOYMENT`; the UI dropdown does not enable real cloud execution.
+Real deployment is still controlled by `.env` safety flags such as `ENABLE_REAL_DEPLOYMENT` and `ALLOW_AWS_DEPLOYMENT`; the UI dropdown does not enable real cloud execution.
 
 ## Running Locally
 
@@ -314,11 +340,11 @@ Monitor free-tier usage and billing carefully, and clean up EC2 instances, Conta
 
 ## Provider Readiness and Deployment Approval
 
-Dry-run remains the default and does not require approval. When real deployment is enabled, the orchestrator first checks provider readiness, validates the Docker image string, and then asks for explicit confirmation before calling a real provider deployment method.
+Dry-run remains the default and does not require approval. When real deployment is enabled, the orchestrator checks the current user's connected account, checks provider readiness, validates the Docker image string, and then asks for explicit confirmation before calling a real provider deployment method.
 
 Readiness checks catch missing cloud setup such as AWS EC2 variables, Azure Container Apps variables, and GCP Cloud Run variables. Docker image validation catches empty images and placeholder values such as `YOUR_DOCKERHUB_USERNAME`; images without tags are shown as warnings.
 
-Real deployment proceeds only when `.env` safety flags are enabled, the selected provider is ready, the Docker image validation passes, and the user confirms the approval step in the dashboard. Use cleanup after real deployments, then verify the AWS, Azure, or GCP console to confirm resources were removed.
+Real deployment proceeds only when `.env` safety flags are enabled, the selected provider is connected and ready, the Docker image validation passes, and the user confirms the approval step in the dashboard. Use cleanup after real deployments, then verify the AWS, Azure, or GCP console to confirm resources were removed.
 
 Optional Docker Hub image existence checks are disabled by default:
 
@@ -334,7 +360,7 @@ When readiness fails, the dashboard shows a bootstrap suggestion plan. These com
 
 ## Cleanup/Delete
 
-Cleanup is available only for stored real AWS, Azure, or GCP deployments. AWS cleanup terminates the recorded EC2 instance. Azure cleanup deletes the recorded Container App through the Azure CLI. GCP cleanup deletes the recorded Cloud Run service. Dry-run records do not create cloud resources and do not need deletion.
+Cleanup is available only for the owner of stored real AWS, Azure, or GCP deployments and uses that owner's connected cloud account. AWS cleanup terminates the recorded EC2 instance. Azure cleanup deletes the recorded Container App through the Azure CLI. GCP cleanup deletes the recorded Cloud Run service. Dry-run records do not create cloud resources and do not need deletion.
 
 After using cleanup, verify the result in the AWS, Azure, or GCP console and confirm that associated billable resources no longer remain.
 
@@ -372,6 +398,7 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 - Health checks depend on the public endpoint becoming reachable within `DEPLOYMENT_TIMEOUT_SECONDS`.
 - OAuth providers require external configuration in the provider dashboards; local tests use mocks only.
 - Auto-cleanup is metadata/helper based and does not run a background worker.
+- Model B currently stores encrypted provider credentials directly; production systems should prefer cloud OAuth, short-lived tokens, or role-based access.
 
 ## Future Work
 
@@ -379,4 +406,4 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 - Replace static provider data with live pricing and region availability.
 - Add richer deployment logs and rollback handling.
 - Add database migrations, admin roles, and richer audit trails.
-- Add user-owned cloud accounts, OAuth cloud authorization, or per-user credentials as a future architecture model.
+- Replace raw cloud credential forms with cloud OAuth, role assumption, short-lived credentials, or managed identity flows.

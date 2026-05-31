@@ -17,12 +17,18 @@ class AzureMockProvider(CloudProvider):
         self.resource_group = os.getenv("AZURE_RESOURCE_GROUP", "")
         self.location = os.getenv("AZURE_LOCATION", "")
         self.containerapp_env = os.getenv("AZURE_CONTAINERAPP_ENV", "")
+        self.tenant_id = os.getenv("AZURE_TENANT_ID", "")
+        self.client_id = os.getenv("AZURE_CLIENT_ID", "")
+        self.client_secret = os.getenv("AZURE_CLIENT_SECRET", "")
+        self.subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+        self._using_cloud_account = False
         self.timeout_seconds = int(os.getenv("DEPLOYMENT_TIMEOUT_SECONDS", "180"))
 
     def estimate(self, config: Dict[str, Any]) -> Dict[str, Any]:
         return PROVIDER_CATALOG[self.name].copy()
 
-    def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_plan(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        values = self._values_for_account(cloud_account)
         commands = []
 
         for service in get_service_definitions(config):
@@ -34,10 +40,10 @@ class AzureMockProvider(CloudProvider):
                 "create",
                 "--name",
                 resource_name,
-                "--resource-group",
-                self.resource_group or "<AZURE_RESOURCE_GROUP>",
-                "--environment",
-                self.containerapp_env or "<AZURE_CONTAINERAPP_ENV>",
+                    "--resource-group",
+                    values["resource_group"] or "<AZURE_RESOURCE_GROUP>",
+                    "--environment",
+                    values["containerapp_env"] or "<AZURE_CONTAINERAPP_ENV>",
                 "--image",
                 service["image"],
                 "--target-port",
@@ -63,9 +69,9 @@ class AzureMockProvider(CloudProvider):
             "deployment_type": "AZURE_CONTAINER_APPS",
             "status": "dry_run",
             "deployment_mode": "dry_run",
-            "location": self.location,
-            "resource_group": self.resource_group,
-            "containerapp_environment": self.containerapp_env,
+            "location": values["location"],
+            "resource_group": values["resource_group"],
+            "containerapp_environment": values["containerapp_env"],
             "resources": config.get("resources", {}),
             "required_env_vars": ["AZURE_RESOURCE_GROUP", "AZURE_CONTAINERAPP_ENV", "AZURE_LOCATION"],
             "generated_commands": commands,
@@ -75,33 +81,36 @@ class AzureMockProvider(CloudProvider):
             "service_endpoints": [],
         }
 
-    def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def deploy(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         missing = self._missing_config()
         if missing:
             return {
                 "provider": self.name,
                 "status": "configuration_error",
                 "missing_vars": missing,
-                "message": "Missing Azure environment variables: " + ", ".join(missing),
-                "action_hint": "Fill AZURE_RESOURCE_GROUP, AZURE_LOCATION, and AZURE_CONTAINERAPP_ENV in .env.",
+                "message": "Missing Azure cloud account configuration: " + ", ".join(missing),
+                "action_hint": "Update your connected Azure account before enabling real Azure deployment.",
                 "logs": [],
                 "generated_commands": [],
                 "endpoints": [],
                 "service_endpoints": [],
             }
 
-        plan = self.generate_plan(config)
+        plan = self.generate_plan(config, cloud_account)
         commands = plan.get("generated_commands", [])
         endpoints = []
         raw_outputs = []
+        run_kwargs = {"capture_output": True, "text": True, "check": True}
+        env = self._subprocess_env()
+        if env:
+            run_kwargs["env"] = env
 
         try:
             for command in commands:
                 completed = subprocess.run(
                     command["command"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                    **run_kwargs,
                 )
                 fqdn = completed.stdout.strip()
                 raw_outputs.append(
@@ -148,7 +157,8 @@ class AzureMockProvider(CloudProvider):
                 "service_endpoints": [],
             }
 
-    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+    def delete(self, deployment_record: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         app_names = deployment_record.get("app_names") or []
         if not app_names:
             deployment = deployment_record.get("deployment", {})
@@ -186,10 +196,14 @@ class AzureMockProvider(CloudProvider):
             ]
             for app_name in app_names
         ]
+        run_kwargs = {"capture_output": True, "text": True, "check": True}
+        env = self._subprocess_env()
+        if env:
+            run_kwargs["env"] = env
 
         try:
             for command in commands:
-                subprocess.run(command, capture_output=True, text=True, check=True)
+                subprocess.run(command, **run_kwargs)
             return {
                 "provider": self.name,
                 "status": "deleted",
@@ -324,7 +338,51 @@ class AzureMockProvider(CloudProvider):
             "AZURE_CONTAINERAPP_ENV": self.containerapp_env,
             "AZURE_LOCATION": self.location,
         }
+        if self._using_cloud_account:
+            required.update(
+                {
+                    "AZURE_TENANT_ID": self.tenant_id,
+                    "AZURE_CLIENT_ID": self.client_id,
+                    "AZURE_CLIENT_SECRET": self.client_secret,
+                    "AZURE_SUBSCRIPTION_ID": self.subscription_id,
+                }
+            )
         return [name for name, value in required.items() if not value]
+
+    def _apply_cloud_account(self, cloud_account: Any = None) -> None:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        if not credentials:
+            return
+        self._using_cloud_account = True
+        self.tenant_id = credentials.get("AZURE_TENANT_ID") or self.tenant_id
+        self.client_id = credentials.get("AZURE_CLIENT_ID") or self.client_id
+        self.client_secret = credentials.get("AZURE_CLIENT_SECRET") or self.client_secret
+        self.subscription_id = credentials.get("AZURE_SUBSCRIPTION_ID") or self.subscription_id
+        self.resource_group = credentials.get("AZURE_RESOURCE_GROUP") or self.resource_group
+        self.location = credentials.get("AZURE_LOCATION") or self.location
+        self.containerapp_env = credentials.get("AZURE_CONTAINERAPP_ENV") or self.containerapp_env
+
+    def _values_for_account(self, cloud_account: Any = None) -> Dict[str, str]:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        return {
+            "resource_group": credentials.get("AZURE_RESOURCE_GROUP") or self.resource_group,
+            "location": credentials.get("AZURE_LOCATION") or self.location,
+            "containerapp_env": credentials.get("AZURE_CONTAINERAPP_ENV") or self.containerapp_env,
+        }
+
+    def _subprocess_env(self):
+        if not self._using_cloud_account:
+            return None
+        env = os.environ.copy()
+        env.update(
+            {
+                "AZURE_TENANT_ID": self.tenant_id,
+                "AZURE_CLIENT_ID": self.client_id,
+                "AZURE_CLIENT_SECRET": self.client_secret,
+                "AZURE_SUBSCRIPTION_ID": self.subscription_id,
+            }
+        )
+        return env
 
 
 def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:
@@ -335,6 +393,16 @@ def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:
 
 def _safe_name(value: str) -> str:
     return "".join(character.lower() if character.isalnum() else "-" for character in value).strip("-") or "service"
+
+
+def _credentials_from_cloud_account(cloud_account: Any = None) -> Dict[str, Any]:
+    if not cloud_account:
+        return {}
+    if isinstance(cloud_account, dict):
+        return cloud_account
+    if hasattr(cloud_account, "get_credentials"):
+        return cloud_account.get_credentials()
+    return {}
 
 
 def _is_public(config: Dict[str, Any], service: Dict[str, Any]) -> bool:

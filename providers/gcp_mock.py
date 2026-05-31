@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import subprocess
+import tempfile
 import time
 from typing import Any, Dict
 from urllib.parse import urlparse, urlunparse
@@ -18,11 +19,14 @@ class GCPMockProvider(CloudProvider):
         self.project_id = os.getenv("GCP_PROJECT_ID", "")
         self.region = os.getenv("GCP_REGION", "asia-south1")
         self.platform = os.getenv("GCP_PLATFORM", "managed")
+        self.service_account_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+        self._using_cloud_account = False
 
     def estimate(self, config: Dict[str, Any]) -> Dict[str, Any]:
         return PROVIDER_CATALOG[self.name].copy()
 
-    def generate_plan(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_plan(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        values = self._values_for_account(cloud_account)
         commands = []
 
         for service in get_service_definitions(config):
@@ -35,9 +39,9 @@ class GCPMockProvider(CloudProvider):
                 "--image",
                 service["image"],
                 "--region",
-                self.region,
+                values["region"],
                 "--platform",
-                self.platform,
+                values["platform"],
                 "--port",
                 str(service["port"]),
                 "--format",
@@ -60,9 +64,9 @@ class GCPMockProvider(CloudProvider):
             "deployment_type": "CLOUD_RUN",
             "status": "dry_run",
             "deployment_mode": "dry_run",
-            "region": self.region,
-            "platform": self.platform,
-            "project_id": self.project_id,
+            "region": values["region"],
+            "platform": values["platform"],
+            "project_id": values["project_id"],
             "resources": config.get("resources", {}),
             "required_env_vars": ["GCP_PROJECT_ID", "GCP_REGION", "GCP_PLATFORM"],
             "generated_commands": commands,
@@ -71,34 +75,39 @@ class GCPMockProvider(CloudProvider):
             "service_endpoints": [],
         }
 
-    def deploy(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def deploy(self, config: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         missing = self._missing_config()
         if missing:
             return {
                 "provider": self.name,
                 "status": "configuration_error",
                 "missing_vars": missing,
-                "message": "Missing GCP environment variables: " + ", ".join(missing),
-                "action_hint": "Set GCP_PROJECT_ID, GCP_REGION, and GCP_PLATFORM before enabling real GCP deployment.",
+                "message": "Missing GCP cloud account configuration: " + ", ".join(missing),
+                "action_hint": "Update your connected GCP account before enabling real GCP deployment.",
                 "generated_commands": [],
                 "logs": [],
                 "endpoints": [],
                 "service_endpoints": [],
             }
 
-        plan = self.generate_plan(config)
+        plan = self.generate_plan(config, cloud_account)
         commands = plan.get("generated_commands", [])
         endpoints = []
         raw_outputs = []
         service_names = []
+        run_kwargs = {"capture_output": True, "text": True, "check": True}
+        temp_key_path = None
+        env = None
 
         try:
+            env, temp_key_path = self._subprocess_env()
+            if env:
+                run_kwargs["env"] = env
             for command in commands:
                 completed = subprocess.run(
                     command["command"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                    **run_kwargs,
                 )
                 payload = json.loads(completed.stdout or "{}")
                 url = payload.get("status", {}).get("url")
@@ -159,8 +168,15 @@ class GCPMockProvider(CloudProvider):
                 "endpoints": [],
                 "service_endpoints": [],
             }
+        finally:
+            if temp_key_path:
+                try:
+                    os.unlink(temp_key_path)
+                except OSError:
+                    pass
 
-    def delete(self, deployment_record: Dict[str, Any]) -> Dict[str, Any]:
+    def delete(self, deployment_record: Dict[str, Any], cloud_account: Any = None) -> Dict[str, Any]:
+        self._apply_cloud_account(cloud_account)
         service_names = deployment_record.get("service_names") or []
         if not service_names:
             deployment = deployment_record.get("deployment", {})
@@ -192,10 +208,16 @@ class GCPMockProvider(CloudProvider):
             ]
             for service_name in service_names
         ]
+        run_kwargs = {"capture_output": True, "text": True, "check": True}
+        temp_key_path = None
+        env = None
 
         try:
+            env, temp_key_path = self._subprocess_env()
+            if env:
+                run_kwargs["env"] = env
             for command in commands:
-                subprocess.run(command, capture_output=True, text=True, check=True)
+                subprocess.run(command, **run_kwargs)
             return {
                 "provider": self.name,
                 "status": "deleted",
@@ -213,6 +235,12 @@ class GCPMockProvider(CloudProvider):
                 "generated_commands": commands,
                 "message": exc.stderr or str(exc),
             }
+        finally:
+            if temp_key_path:
+                try:
+                    os.unlink(temp_key_path)
+                except OSError:
+                    pass
 
     def health_check(self, result: Dict[str, Any]) -> Dict[str, Any]:
         endpoints = result.get("service_endpoints") or result.get("endpoints") or []
@@ -327,7 +355,43 @@ class GCPMockProvider(CloudProvider):
             "GCP_REGION": self.region,
             "GCP_PLATFORM": self.platform,
         }
+        if self._using_cloud_account:
+            required["GCP_SERVICE_ACCOUNT_JSON"] = self.service_account_json
         return [name for name, value in required.items() if not value]
+
+    def _apply_cloud_account(self, cloud_account: Any = None) -> None:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        if not credentials:
+            return
+        self._using_cloud_account = True
+        self.project_id = credentials.get("GCP_PROJECT_ID") or self.project_id
+        self.region = credentials.get("GCP_REGION") or self.region
+        self.platform = credentials.get("GCP_PLATFORM") or self.platform
+        self.service_account_json = credentials.get("GCP_SERVICE_ACCOUNT_JSON") or self.service_account_json
+
+    def _values_for_account(self, cloud_account: Any = None) -> Dict[str, str]:
+        credentials = _credentials_from_cloud_account(cloud_account)
+        return {
+            "project_id": credentials.get("GCP_PROJECT_ID") or self.project_id,
+            "region": credentials.get("GCP_REGION") or self.region,
+            "platform": credentials.get("GCP_PLATFORM") or self.platform,
+        }
+
+    def _subprocess_env(self):
+        if not self._using_cloud_account:
+            return None, None
+        env = os.environ.copy()
+        env["CLOUDSDK_CORE_PROJECT"] = self.project_id
+        if not self.service_account_json:
+            return env, None
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, prefix="fyp-gcp-", suffix=".json")
+        try:
+            handle.write(self.service_account_json)
+            temp_path = handle.name
+        finally:
+            handle.close()
+        env["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+        return env, temp_path
 
 
 def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:
@@ -338,6 +402,16 @@ def _service_name(config: Dict[str, Any], service: Dict[str, Any]) -> str:
 
 def _safe_name(value: str) -> str:
     return "".join(character.lower() if character.isalnum() else "-" for character in value).strip("-") or "service"
+
+
+def _credentials_from_cloud_account(cloud_account: Any = None) -> Dict[str, Any]:
+    if not cloud_account:
+        return {}
+    if isinstance(cloud_account, dict):
+        return cloud_account
+    if hasattr(cloud_account, "get_credentials"):
+        return cloud_account.get_credentials()
+    return {}
 
 
 def _is_public(config: Dict[str, Any], service: Dict[str, Any]) -> bool:

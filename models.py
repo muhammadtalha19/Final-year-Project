@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from flask_login import UserMixin
 
+from credential_vault import SENSITIVE_KEYS, decrypt_credentials, encrypt_credentials, mask_secret
 from database import db
 
 
@@ -22,6 +23,7 @@ class User(UserMixin, db.Model):
     last_login_at = db.Column(db.DateTime, nullable=True)
 
     deployments = db.relationship("DeploymentRecord", back_populates="user", cascade="all, delete-orphan")
+    cloud_accounts = db.relationship("CloudAccount", back_populates="user", cascade="all, delete-orphan")
 
     @property
     def has_local_password(self) -> bool:
@@ -84,6 +86,7 @@ class DeploymentRecord(db.Model):
         deployment = result.get("deployment", {})
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "app_name": self.app_name,
             "execution_provider": self.execution_provider,
             "status": self.status,
@@ -92,6 +95,60 @@ class DeploymentRecord(db.Model):
             "app_names": deployment.get("app_names", []),
             "service_names": deployment.get("service_names", []),
             "deployment": deployment,
+        }
+
+
+class CloudAccount(db.Model):
+    __tablename__ = "cloud_accounts"
+    __table_args__ = (db.UniqueConstraint("user_id", "provider", name="uq_cloud_account_user_provider"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    provider = db.Column(db.String(20), nullable=False, index=True)
+    display_name = db.Column(db.String(120), nullable=True)
+    encrypted_credentials = db.Column(db.Text, nullable=False)
+    region = db.Column(db.String(120), nullable=True)
+    project_id = db.Column(db.String(200), nullable=True)
+    subscription_id = db.Column(db.String(200), nullable=True)
+    status = db.Column(db.String(80), default="connected", nullable=False)
+    last_checked_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = db.relationship("User", back_populates="cloud_accounts")
+
+    def set_credentials(self, credentials):
+        self.encrypted_credentials = encrypt_credentials(credentials)
+        self.region = credentials.get("AWS_REGION") or credentials.get("AZURE_LOCATION") or credentials.get("GCP_REGION")
+        self.project_id = credentials.get("GCP_PROJECT_ID")
+        self.subscription_id = credentials.get("AZURE_SUBSCRIPTION_ID")
+        self.status = "connected"
+
+    def get_credentials(self):
+        return decrypt_credentials(self.encrypted_credentials)
+
+    def masked_summary(self):
+        credentials = self.get_credentials()
+        safe_credentials = {}
+        for key, value in credentials.items():
+            if key in SENSITIVE_KEYS or key.lower() in SENSITIVE_KEYS:
+                continue
+            if "SECRET" in key.upper() or "TOKEN" in key.upper() or "PRIVATE_KEY" in key.upper():
+                continue
+            safe_credentials[key] = mask_secret(value) if "KEY" in key.upper() or "CLIENT_ID" in key.upper() else value
+
+        return {
+            "id": self.id,
+            "provider": self.provider,
+            "display_name": self.display_name or self.provider,
+            "region": self.region,
+            "project_id": self.project_id,
+            "subscription_id": mask_secret(self.subscription_id) if self.subscription_id else "",
+            "status": self.status,
+            "last_checked_at": self.last_checked_at,
+            "created_at": self.created_at,
+            "credentials": safe_credentials,
+            "connected": True,
         }
 
 

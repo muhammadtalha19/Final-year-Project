@@ -2,6 +2,7 @@
 {% set deployment = result.get('deployment', {}) %}
 {% set health = result.get('health_check', {}) %}
 {% set diagnostics = result.get('diagnostics', {}) %}
+{% set cloud_account = result.get('cloud_account', {}) %}
 
 <section class="summary-grid">
     <div class="summary-card"><span class="label">Selected Provider</span><strong>{{ decision.get('selected_provider') or 'N/A' }}</strong></div>
@@ -9,6 +10,7 @@
     <div class="summary-card"><span class="label">Status</span><span class="status {{ status_class(result.get('status') or record.status) }}">{{ result.get('status') or record.status or 'unknown' }}</span></div>
     <div class="summary-card"><span class="label">Public URL</span>{% if record.endpoint %}<a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a>{% else %}N/A{% endif %}</div>
     <div class="summary-card"><span class="label">Health</span><strong>{{ health.get('result') or health.get('status') or record.health_status or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Cloud Account</span><strong>{{ 'connected' if cloud_account.get('connected') else 'missing' }}</strong></div>
 </section>
 
 <section class="grid page-grid">
@@ -109,7 +111,11 @@
         <div><span class="label">Status</span>{{ deployment.get('status') or result.get('status') or 'N/A' }}</div>
         <div><span class="label">Message</span>{{ deployment.get('message') or 'N/A' }}</div>
         <div><span class="label">Cleanup</span>{{ record.cleanup_status or result.get('cleanup_result', {}).get('status') or 'N/A' }}</div>
+        <div><span class="label">Cloud Account</span>{{ cloud_account.get('display_name') or cloud_account.get('message') or 'N/A' }}</div>
     </div>
+    {% if result.get('status') == 'cloud_account_required' %}
+        <p class="notice danger-note">Connect the selected provider from <a href="{{ url_for('cloud_accounts') }}">Cloud Accounts</a>, then retry or choose a connected provider.</p>
+    {% endif %}
 </section>
 
 <section class="panel">

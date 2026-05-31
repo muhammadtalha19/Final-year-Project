@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests
 import yaml
@@ -16,8 +17,9 @@ except ImportError:  # pragma: no cover - dependency is installed in the project
 
 from auth import begin_oauth, complete_oauth, init_auth, oauth_status
 from config_schema import ConfigValidationError, validate_config
+from credential_vault import is_encryption_configured
 from database import db, init_database
-from models import DeploymentRecord, User, auto_cleanup_delta, find_due_cleanups
+from models import CloudAccount, DeploymentRecord, User, auto_cleanup_delta, find_due_cleanups
 from orchestrator import cleanup_deployment_record, deploy_app
 from provider_bootstrap import generate_provider_bootstrap_plan
 from provider_readiness import check_provider_readiness
@@ -213,6 +215,38 @@ requirements:
 }
 
 
+PROVIDERS = ["AWS", "Azure", "GCP"]
+
+
+CLOUD_ACCOUNT_FIELDS = {
+    "AWS": [
+        {"name": "AWS_ACCESS_KEY_ID", "label": "AWS Access Key ID", "required": True, "secret": True},
+        {"name": "AWS_SECRET_ACCESS_KEY", "label": "AWS Secret Access Key", "required": True, "secret": True},
+        {"name": "AWS_REGION", "label": "AWS Region", "required": True},
+        {"name": "AWS_AMI_ID", "label": "AWS AMI ID", "required": False},
+        {"name": "AWS_INSTANCE_TYPE", "label": "AWS Instance Type", "required": False, "default": "t3.micro"},
+        {"name": "AWS_KEY_NAME", "label": "AWS Key Name", "required": False},
+        {"name": "AWS_SECURITY_GROUP_ID", "label": "AWS Security Group ID", "required": False},
+        {"name": "AWS_SUBNET_ID", "label": "AWS Subnet ID", "required": False},
+    ],
+    "Azure": [
+        {"name": "AZURE_TENANT_ID", "label": "Azure Tenant ID", "required": True, "secret": True},
+        {"name": "AZURE_CLIENT_ID", "label": "Azure Client ID", "required": True, "secret": True},
+        {"name": "AZURE_CLIENT_SECRET", "label": "Azure Client Secret", "required": True, "secret": True},
+        {"name": "AZURE_SUBSCRIPTION_ID", "label": "Azure Subscription ID", "required": True},
+        {"name": "AZURE_RESOURCE_GROUP", "label": "Azure Resource Group", "required": True},
+        {"name": "AZURE_LOCATION", "label": "Azure Location", "required": True, "default": "eastus"},
+        {"name": "AZURE_CONTAINERAPP_ENV", "label": "Azure Container Apps Environment", "required": True},
+    ],
+    "GCP": [
+        {"name": "GCP_PROJECT_ID", "label": "GCP Project ID", "required": True},
+        {"name": "GCP_REGION", "label": "GCP Region", "required": True, "default": "asia-south1"},
+        {"name": "GCP_PLATFORM", "label": "GCP Platform", "required": True, "default": "managed"},
+        {"name": "GCP_SERVICE_ACCOUNT_JSON", "label": "GCP Service Account JSON", "required": True, "secret": True, "textarea": True},
+    ],
+}
+
+
 @app.context_processor
 def inject_portal_context():
     return {
@@ -310,7 +344,12 @@ def deploy_new():
         return _handle_deploy_submission()
     template_key = request.args.get("template", "")
     prefilled_yaml = YAML_TEMPLATES.get(template_key, {}).get("yaml", "")
-    return render_template("deploy_new.html", prefilled_yaml=prefilled_yaml, selected_template=template_key)
+    return render_template(
+        "deploy_new.html",
+        prefilled_yaml=prefilled_yaml,
+        selected_template=template_key,
+        cloud_accounts=_cloud_account_summaries(current_user.id),
+    )
 
 
 @app.route("/deploy", methods=["POST"])
@@ -343,7 +382,12 @@ def deployment_detail(deployment_id):
 def confirm_deployment(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
     config = yaml.safe_load(record.yaml_content)
-    result = deploy_app(config, confirm_real_deployment=True)
+    result = deploy_app(
+        config,
+        confirm_real_deployment=True,
+        cloud_accounts=_cloud_account_map(current_user.id),
+        require_cloud_account=True,
+    )
     record.apply_result(result, yaml_content=record.yaml_content)
     db.session.commit()
     return render_template("deploy_result.html", record=record, result=result)
@@ -353,7 +397,12 @@ def confirm_deployment(deployment_id):
 @login_required
 def delete_saved_deployment(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
-    delete_result = cleanup_deployment_record(record.to_cleanup_record())
+    account = _cloud_account_for_user(current_user.id, record.execution_provider)
+    delete_result = cleanup_deployment_record(
+        record.to_cleanup_record(),
+        cloud_account=account,
+        require_cloud_account=True,
+    )
     result = dict(record.result_json or {})
     result["cleanup_result"] = delete_result
     result["status"] = delete_result["status"]
@@ -457,6 +506,87 @@ def templates_library():
     return render_template("templates.html", templates=YAML_TEMPLATES)
 
 
+@app.route("/cloud/accounts", methods=["GET"])
+@login_required
+def cloud_accounts():
+    return render_template(
+        "cloud_accounts.html",
+        providers=PROVIDERS,
+        accounts=_cloud_account_summaries(current_user.id),
+        encryption_configured=is_encryption_configured(),
+    )
+
+
+@app.route("/cloud/<provider>/connect", methods=["GET", "POST"])
+@login_required
+def connect_cloud_account(provider):
+    provider_name = _normalize_provider(provider)
+    if provider_name not in CLOUD_ACCOUNT_FIELDS:
+        return redirect(url_for("cloud_accounts"))
+
+    account = _cloud_account_for_user(current_user.id, provider_name)
+    if request.method == "POST":
+        errors, credentials = _cloud_account_credentials_from_form(provider_name)
+        display_name = request.form.get("display_name", "").strip() or f"{provider_name} account"
+        if not is_encryption_configured():
+            errors.append("CREDENTIAL_ENCRYPTION_KEY is not configured. Cloud credentials were not saved.")
+        if errors:
+            return render_template(
+                "cloud_account_form.html",
+                provider=provider_name,
+                fields=CLOUD_ACCOUNT_FIELDS[provider_name],
+                errors=errors,
+                account=account,
+            ), 400
+
+        account = account or CloudAccount(user_id=current_user.id, provider=provider_name)
+        account.display_name = display_name
+        try:
+            account.set_credentials(credentials)
+            db.session.add(account)
+            db.session.commit()
+        except (RuntimeError, ValueError) as exc:
+            db.session.rollback()
+            return render_template(
+                "cloud_account_form.html",
+                provider=provider_name,
+                fields=CLOUD_ACCOUNT_FIELDS[provider_name],
+                errors=[str(exc)],
+                account=account,
+            ), 400
+        except IntegrityError:
+            db.session.rollback()
+            return render_template(
+                "cloud_account_form.html",
+                provider=provider_name,
+                fields=CLOUD_ACCOUNT_FIELDS[provider_name],
+                errors=["Only one account per provider is allowed for each user."],
+                account=account,
+            ), 400
+
+        flash(f"{provider_name} cloud account saved. Secret fields were cleared after save.")
+        return redirect(url_for("cloud_accounts"))
+
+    return render_template(
+        "cloud_account_form.html",
+        provider=provider_name,
+        fields=CLOUD_ACCOUNT_FIELDS[provider_name],
+        errors=[],
+        account=account,
+    )
+
+
+@app.route("/cloud/accounts/<int:account_id>/delete", methods=["POST"])
+@login_required
+def delete_cloud_account(account_id):
+    account = CloudAccount.query.filter_by(id=account_id, user_id=current_user.id).first_or_404()
+    provider_name = account.provider
+    db.session.delete(account)
+    db.session.commit()
+    flash(f"{provider_name} cloud account disconnected.")
+    return redirect(url_for("cloud_accounts"))
+
+
 def _handle_deploy_submission():
     uploaded_file = request.files.get("config_file")
     textarea_content = request.form.get("yaml_content", "").strip()
@@ -468,18 +598,35 @@ def _handle_deploy_submission():
         try:
             yaml_content = uploaded_file.read().decode("utf-8")
         except Exception as exc:
-            return render_template("deploy_new.html", errors=[f"Could not read YAML file: {exc}"]), 400
+            return render_template(
+                "deploy_new.html",
+                errors=[f"Could not read YAML file: {exc}"],
+                cloud_accounts=_cloud_account_summaries(current_user.id),
+            ), 400
     else:
-        return render_template("deploy_new.html", errors=["Provide a YAML file or paste YAML content."]), 400
+        return render_template(
+            "deploy_new.html",
+            errors=["Provide a YAML file or paste YAML content."],
+            cloud_accounts=_cloud_account_summaries(current_user.id),
+        ), 400
 
     try:
         deployment_config = yaml.safe_load(yaml_content)
     except Exception as exc:
-        return render_template("deploy_new.html", errors=[f"Invalid YAML file: {exc}"], prefilled_yaml=yaml_content), 400
+        return render_template(
+            "deploy_new.html",
+            errors=[f"Invalid YAML file: {exc}"],
+            prefilled_yaml=yaml_content,
+            cloud_accounts=_cloud_account_summaries(current_user.id),
+        ), 400
 
     _apply_cloud_selection_override(deployment_config, request.form.get("cloud_selection", "yaml"))
     effective_yaml = yaml.safe_dump(deployment_config, sort_keys=False)
-    result = deploy_app(deployment_config)
+    result = deploy_app(
+        deployment_config,
+        cloud_accounts=_cloud_account_map(current_user.id),
+        require_cloud_account=True,
+    )
     record = _save_deployment_result(
         current_user.id,
         effective_yaml,
@@ -534,12 +681,72 @@ def _apply_cloud_selection_override(deployment_config, cloud_selection):
         deployment_config["selection"] = override
 
 
+def _cloud_account_for_user(user_id: int, provider: Optional[str]):
+    provider_name = _normalize_provider(provider)
+    if not provider_name:
+        return None
+    return CloudAccount.query.filter_by(user_id=user_id, provider=provider_name).first()
+
+
+def _cloud_account_map(user_id: int) -> Dict[str, CloudAccount]:
+    return {account.provider: account for account in CloudAccount.query.filter_by(user_id=user_id).all()}
+
+
+def _cloud_account_summaries(user_id: int) -> Dict[str, Dict[str, Any]]:
+    connected = _cloud_account_map(user_id)
+    summaries = {}
+    for provider in PROVIDERS:
+        account = connected.get(provider)
+        if account:
+            summaries[provider] = account.masked_summary()
+        else:
+            summaries[provider] = {
+                "provider": provider,
+                "connected": False,
+                "status": "not_connected",
+                "display_name": provider,
+                "region": "",
+                "project_id": "",
+                "subscription_id": "",
+                "last_checked_at": None,
+            }
+    return summaries
+
+
+def _cloud_account_credentials_from_form(provider: str) -> tuple[list[str], Dict[str, str]]:
+    errors = []
+    credentials = {}
+    for field in CLOUD_ACCOUNT_FIELDS[provider]:
+        name = field["name"]
+        value = request.form.get(name, "").strip()
+        if not value and field.get("default"):
+            value = field["default"]
+        if field.get("required") and not value:
+            errors.append(f"{field['label']} is required.")
+        credentials[name] = value
+    return errors, credentials
+
+
+def _normalize_provider(provider: Optional[str]) -> Optional[str]:
+    if not provider:
+        return None
+    return {"aws": "AWS", "azure": "Azure", "gcp": "GCP"}.get(str(provider).strip().lower(), provider)
+
+
 def _provider_readiness_summary(include_bootstrap: bool = False):
     config = _readiness_probe_config()
     summary = []
+    accounts = _cloud_account_map(current_user.id) if current_user.is_authenticated else {}
     for provider in ["AWS", "Azure", "GCP"]:
-        readiness = check_provider_readiness(provider, config)
+        readiness = check_provider_readiness(
+            provider,
+            config,
+            cloud_account=accounts.get(provider),
+            require_cloud_account=True,
+        )
         item = {"provider": provider, "readiness": readiness}
+        if accounts.get(provider):
+            item["account"] = accounts[provider].masked_summary()
         if include_bootstrap or not readiness.get("ready"):
             item["bootstrap_plan"] = generate_provider_bootstrap_plan(provider)
         summary.append(item)
@@ -574,7 +781,7 @@ def _deployment_analytics(records):
         "dry_run": sum(1 for record in records if record.status == "dry_run"),
         "real": sum(1 for record in records if record.deployment_mode == "real"),
         "deployed": sum(1 for record in records if record.status == "deployed"),
-        "failed": sum(1 for record in records if record.status in {"failed", "configuration_error", "provider_not_ready", "image_validation_failed"}),
+        "failed": sum(1 for record in records if record.status in {"failed", "configuration_error", "provider_not_ready", "image_validation_failed", "cloud_account_required"}),
         "deleted": sum(1 for record in records if record.status in {"deleted", "delete_skipped"}),
         "by_provider": by_provider,
         "by_app_type": by_app_type,
@@ -645,6 +852,7 @@ def _report_from_record(record: DeploymentRecord) -> str:
         f"Status: {record.status or 'N/A'}",
         f"Endpoint: {record.endpoint or 'N/A'}",
         f"Cleanup status: {record.cleanup_status or 'N/A'}",
+        f"Cloud account connected: {result.get('cloud_account', {}).get('connected', 'N/A')}",
         "",
         "Provider Evaluation:",
     ]
@@ -683,6 +891,8 @@ def _safety_flags():
         "ALLOW_AWS_DEPLOYMENT": os.getenv("ALLOW_AWS_DEPLOYMENT", "false"),
         "ALLOW_AZURE_DEPLOYMENT": os.getenv("ALLOW_AZURE_DEPLOYMENT", "false"),
         "ALLOW_GCP_DEPLOYMENT": os.getenv("ALLOW_GCP_DEPLOYMENT", "false"),
+        "MODEL_B_USER_CLOUD_ACCOUNTS": os.getenv("MODEL_B_USER_CLOUD_ACCOUNTS", "true"),
+        "ALLOW_ADMIN_CLOUD_FALLBACK": os.getenv("ALLOW_ADMIN_CLOUD_FALLBACK", "false"),
     }
 
 
@@ -690,7 +900,7 @@ def _status_class(status: Optional[str]) -> str:
     status = (status or "").lower()
     if status in {"deployed", "passed", "deleted"}:
         return "success"
-    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready"}:
+    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready", "cloud_account_required"}:
         return "warning"
     if status in {"failed", "validation_failed", "configuration_error", "image_validation_failed", "delete_failed"}:
         return "danger"

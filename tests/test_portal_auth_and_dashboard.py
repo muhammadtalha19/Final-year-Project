@@ -370,6 +370,6 @@ def test_providers_page_masks_environment_values(monkeypatch):
     response = client.get("/providers")
 
     assert response.status_code == 200
-    assert b"Cloud credentials are configured by the administrator" in response.data
+    assert b"Deployments run in your connected cloud account" in response.data
     assert b"AWS" in response.data and b"Azure" in response.data and b"GCP" in response.data
     assert b"super-secret-region-value" not in response.data

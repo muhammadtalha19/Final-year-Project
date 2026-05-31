@@ -9,4 +9,5 @@ python-dotenv
 pydantic
 requests
 Authlib
+cryptography
 pytest

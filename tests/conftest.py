@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import Fernet
 
 
 @pytest.fixture(autouse=True)
@@ -11,6 +12,9 @@ def safe_test_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLOW_GCP_DEPLOYMENT", "false")
     monkeypatch.setenv("ALLOW_AZURE_DEPLOYMENT", "false")
     monkeypatch.setenv("DEPLOYMENT_HISTORY_FILE", str(tmp_path / "history.json"))
+    monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    monkeypatch.setenv("MODEL_B_USER_CLOUD_ACCOUNTS", "false")
+    monkeypatch.setenv("ALLOW_ADMIN_CLOUD_FALLBACK", "true")
     for name in [
         "GITHUB_CLIENT_ID",
         "GITHUB_CLIENT_SECRET",
