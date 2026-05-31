@@ -17,6 +17,36 @@
 {% for item in readiness %}
     <section class="panel">
         <h2>{{ item.provider }}</h2>
+        <div class="summary-grid">
+            <div class="summary-card">
+                <span class="label">Connection</span>
+                <strong>{{ 'Connected' if item.account else 'Not connected' }}</strong>
+            </div>
+            <div class="summary-card">
+                <span class="label">Readiness Score</span>
+                <strong>
+                    {% if not item.account %}
+                        Not connected
+                    {% elif item.readiness.ready %}
+                        Ready
+                    {% elif item.readiness.missing %}
+                        Blocked
+                    {% else %}
+                        Partially ready
+                    {% endif %}
+                </strong>
+            </div>
+            <div class="summary-card">
+                <span class="label">Region / Project / Subscription</span>
+                <strong>
+                    {% if item.account %}
+                        {{ item.account.region or item.account.project_id or item.account.subscription_id or 'configured' }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </strong>
+            </div>
+        </div>
         {% if item.account %}
             <p><strong>Account:</strong> {{ item.account.display_name }}{% if item.account.region %} · {{ item.account.region }}{% endif %}</p>
         {% endif %}

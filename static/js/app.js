@@ -36,4 +36,25 @@
             }).catch(function () {});
         }
     });
+
+    const summary = document.getElementById("deployment-summary");
+    if (summary && ["queued", "running"].includes(summary.dataset.status || "")) {
+        const deploymentId = summary.dataset.deploymentId;
+        window.setInterval(function () {
+            fetch(`/deployments/${deploymentId}/status`)
+                .then(function (response) { return response.ok ? response.json() : null; })
+                .then(function (payload) {
+                    if (!payload) { return; }
+                    summary.dataset.status = payload.status || "";
+                    const statusNode = summary.querySelector(".status");
+                    if (statusNode && payload.status) {
+                        statusNode.textContent = payload.status;
+                    }
+                    if (!["queued", "running"].includes(payload.status || "")) {
+                        window.location.reload();
+                    }
+                })
+                .catch(function () {});
+        }, 5000);
+    }
 })();

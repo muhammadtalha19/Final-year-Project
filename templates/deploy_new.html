@@ -5,6 +5,23 @@
     <span class="label">New Deployment</span>
     <h1>Upload or paste YAML</h1>
     <div class="summary-grid">
+        {% if quota %}
+            <div class="summary-card">
+                <span class="label">Active Real Deployments</span>
+                <strong>{{ quota.active_count }}/{{ quota.active_limit }}</strong>
+                <p class="empty">Dry-runs do not count against this limit.</p>
+            </div>
+            <div class="summary-card">
+                <span class="label">Real Deployments Today</span>
+                <strong>{{ quota.real_today_count }}/{{ quota.real_today_limit }}</strong>
+                <p class="empty">Queued real deployments count after approval.</p>
+            </div>
+            <div class="summary-card">
+                <span class="label">Monthly Cost Safety Limit</span>
+                <strong>${{ quota.monthly_cost_limit_usd }}</strong>
+                <p class="empty">Applies only to real deployment approval.</p>
+            </div>
+        {% endif %}
         {% for provider, account in (cloud_accounts or {}).items() %}
             <div class="summary-card">
                 <span class="label">{{ provider }} Account</span>
@@ -20,12 +37,14 @@
         {% endfor %}
     </div>
     <p><a href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a></p>
+    <p class="notice danger-note">Real deployments create resources in your connected cloud account and may incur charges. Dry-run remains safe and does not require billing acknowledgement.</p>
     {% if errors %}
         <div class="notice danger-note">
             {% for error in errors %}<p>{{ error }}</p>{% endfor %}
         </div>
     {% endif %}
     <form method="post" enctype="multipart/form-data" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-row">
             <label>Cloud Selection
                 <select name="cloud_selection">

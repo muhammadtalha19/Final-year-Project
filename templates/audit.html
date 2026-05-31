@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Audit Logs{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Audit</span>
+    <h1>Audit Logs</h1>
+    <p class="empty">Audit metadata is sanitized and does not include raw YAML, OAuth tokens, or cloud credential values.</p>
+    {% if logs %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Time</th><th>Action</th><th>Entity</th><th>Provider</th><th>Message</th><th>Request</th></tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                        <tr>
+                            <td>{{ format_dt(log.created_at) }}</td>
+                            <td>{{ log.action }}</td>
+                            <td>{{ log.entity_type or 'N/A' }}{% if log.entity_id %} / {{ log.entity_id }}{% endif %}</td>
+                            <td>{{ log.provider or 'N/A' }}</td>
+                            <td>{{ log.message or 'N/A' }}</td>
+                            <td>{{ log.request_id or 'N/A' }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty">No audit events yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

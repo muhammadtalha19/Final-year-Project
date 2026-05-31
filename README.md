@@ -10,6 +10,12 @@ This project evaluates AWS, GCP, and Azure using a provider catalog. The current
 
 The portal now uses Model B: user-owned cloud accounts. Users register/login, connect their own AWS, Azure, or GCP account, and real deployments/cleanup run in that user's connected account. Dry-run mode still works without connected cloud accounts. Users own the deployed resources and any cloud billing.
 
+## Security Warning
+
+Never commit `.env`, AWS keys, Azure secrets, GCP service account JSON, OAuth secrets, Fernet keys, private keys, certificates, or runtime databases. If keys were committed, shared, or pasted into chat, rotate them immediately.
+
+User cloud credentials are encrypted with `CREDENTIAL_ENCRYPTION_KEY`. If that key is exposed, rotate it before saving real credentials again. In production, use environment variables or a platform secret manager for all application secrets.
+
 ## Problem Statement
 
 Small teams and non-DevOps users often struggle to decide where to deploy containerized applications while balancing cost and reliability. Manual provider comparison and infrastructure setup can be error-prone. This project explores whether a YAML-driven orchestrator can simplify deployment decisions and automate the first execution path.
@@ -48,6 +54,39 @@ Orchestrator (orchestrator.py)
 Dashboard Result
 ```
 
+## Production MVP Architecture
+
+```text
+user -> Flask portal -> database -> RQ queue -> worker -> selected cloud provider
+                                      |                         |
+                                      +-> reports/audit logs    +-> health check -> result
+```
+
+The production-MVP path keeps infrastructure hidden from SME users. Users interact with auth, cloud account connection, YAML upload, the deployment wizard, dry-run plans, approval, reports, cleanup, and audit logs. Cloud credentials are encrypted per user and are never shown back in the UI.
+
+Phase 13 Docker/Gunicorn/Sentry packaging was intentionally skipped in this pass to conserve usage and avoid risky backend refactors. The app has Redis/RQ worker support, but Docker Compose files were not added in this phase.
+
+## Supervisor Demo Flow
+
+1. Register or log in.
+2. Connect a user-owned cloud account from `/cloud/accounts`, or leave accounts disconnected for dry-run-only demo mode.
+3. Open `/demo-scenarios` and choose Static Web App, Backend API, or ML API.
+4. Use the template or `/deploy/wizard` to generate YAML.
+5. Run auto provider selection and review "Why this provider?".
+6. Generate a dry-run plan and show provider-specific commands without creating resources.
+7. Review billing acknowledgement, quotas, approval gate, and provider readiness.
+8. Open the deployment report and audit log.
+9. For controlled real demos only, enable safety flags, confirm deployment, then use cleanup.
+
+## SME Value
+
+- Users do not need to learn AWS, Azure, or GCP consoles for the first deployment plan.
+- One YAML/wizard interface works for static web apps, APIs, and small ML APIs.
+- Provider choice is cost-aware, reliability-aware, and explainable.
+- Model B user-owned accounts keep resources and billing under the SME user's cloud account.
+- Dry-run, quotas, billing acknowledgement, approval, readiness checks, audit logs, and cleanup reduce accidental spending.
+- Reports and timelines make the deployment process easier to review with a supervisor or SME stakeholder.
+
 ## Setup
 
 ```bash
@@ -67,42 +106,66 @@ Generate an encryption key:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+Database migrations use Flask-Migrate:
+
+```bash
+flask db init
+flask db migrate -m "initial migration"
+flask db upgrade
+```
+
+For production, set `DATABASE_URL` to PostgreSQL. `postgres://` URLs are normalized to `postgresql://`.
+
+Run the worker separately when background jobs are enabled:
+
+```bash
+python worker.py
+```
+
+Docker Compose packaging is future work in this repository state because the Docker/Gunicorn/Sentry phase was skipped. A future compose setup should run separate `web`, `worker`, `redis`, and `postgres` services.
+
 ## Environment Variables
 
 ```text
 FLASK_ENV=development
 SECRET_KEY=
+CREDENTIAL_ENCRYPTION_KEY=
 DATABASE_URL=
-AWS_REGION=
-AWS_AMI_ID=
-AWS_INSTANCE_TYPE=t3.micro
-AWS_KEY_NAME=
-AWS_SECURITY_GROUP_ID=
-AWS_SUBNET_ID=
-DEPLOYMENT_TIMEOUT_SECONDS=180
-ENABLE_LIVE_PRICING=false
-ENABLE_IMAGE_REGISTRY_CHECK=false
+REDIS_URL=redis://localhost:6379/0
+SENTRY_DSN=
+MODEL_B_USER_CLOUD_ACCOUNTS=true
+ALLOW_ADMIN_CLOUD_FALLBACK=false
 ENABLE_REAL_DEPLOYMENT=false
-ALLOW_HIGH_SCALE=false
 ALLOW_AWS_DEPLOYMENT=false
 ALLOW_AZURE_DEPLOYMENT=false
 ALLOW_GCP_DEPLOYMENT=false
-GCP_PROJECT_ID=
-GCP_REGION=asia-south1
-GCP_PLATFORM=managed
-AZURE_RESOURCE_GROUP=
-AZURE_LOCATION=eastus
-AZURE_CONTAINERAPP_ENV=
+AUTO_TERMINATE_ON_FAILURE=false
+DEPLOYMENT_TIMEOUT_SECONDS=300
+MAX_ACTIVE_DEPLOYMENTS_PER_USER=3
+MAX_REAL_DEPLOYMENTS_PER_DAY=5
+MAX_MONTHLY_COST_LIMIT_USD=50
+ENABLE_LIVE_PRICING=false
+ENABLE_IMAGE_REGISTRY_CHECK=false
+ALLOW_HIGH_SCALE=false
+OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
-OAUTH_REDIRECT_BASE_URL=http://127.0.0.1:5001
-CREDENTIAL_ENCRYPTION_KEY=
-MODEL_B_USER_CLOUD_ACCOUNTS=true
-ALLOW_ADMIN_CLOUD_FALLBACK=false
+AWS_REGION=
+AWS_AMI_ID=
+AWS_INSTANCE_TYPE=t3.micro
+AWS_KEY_NAME=
+AWS_SECURITY_GROUP_ID=
+AWS_SUBNET_ID=
+GCP_PROJECT_ID=
+GCP_REGION=asia-south1
+GCP_PLATFORM=managed
+AZURE_RESOURCE_GROUP=
+AZURE_LOCATION=eastus
+AZURE_CONTAINERAPP_ENV=
 ```
 
 In Model B, users normally enter provider configuration in `/cloud/accounts`. Admin/server env cloud values are used only when `ALLOW_ADMIN_CLOUD_FALLBACK=true`.
@@ -132,11 +195,16 @@ The Flask UI is organized as a small multi-page portal:
 - `/auth/github`, `/auth/google`, `/auth/microsoft` and matching callback routes
 - `/dashboard` user analytics and latest deployments
 - `/deploy/new` YAML upload/paste form with provider selector
+- `/deploy/wizard` guided YAML builder for static-web, api, and ml-api workloads
 - `/templates` built-in YAML templates
+- `/demo-scenarios` supervisor-friendly demo scenarios
 - `/deployments` user-specific history
 - `/deployments/<id>` deployment details
 - `/deployment-report/<id>` plain text report
-- `/providers` admin/server provider readiness and bootstrap suggestions
+- `/providers` user cloud account readiness and bootstrap suggestions
+- `/production-readiness` implemented/future production checklist
+- `/audit` user-specific audit log
+- `/admin`, `/admin/users`, `/admin/deployments` admin-only overview pages
 - `/settings` profile, theme, and password settings
 
 Email/password login uses Werkzeug password hashing. OAuth login uses Authlib and stores only provider name, provider user ID, profile metadata, and timestamps; OAuth access tokens are not stored. Users can see, refresh, report, and delete only their own deployment records.
@@ -271,6 +339,24 @@ flask run
 
 Open the Flask URL, create an account, upload one of the files in `examples/`, and review the selected provider, execution provider, scoring table, deployment status, endpoint, health-check result, diagnostics, and report.
 
+Common commands:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pytest -q
+flask db upgrade
+flask run --port 5001
+python worker.py
+```
+
+Docker Compose command placeholder for future packaging:
+
+```bash
+# Future Phase 13 work, not included in this pass:
+# docker compose up --build
+```
+
 ## Decision Engine
 
 The decision engine first applies hard filters:
@@ -399,11 +485,14 @@ The tests cover YAML validation, decision filtering, pricing fallback behavior, 
 - OAuth providers require external configuration in the provider dashboards; local tests use mocks only.
 - Auto-cleanup is metadata/helper based and does not run a background worker.
 - Model B currently stores encrypted provider credentials directly; production systems should prefer cloud OAuth, short-lived tokens, or role-based access.
+- Docker/Gunicorn/Sentry packaging was skipped in this pass and should be added before wider production use.
+- Payment/subscription billing, team workspaces, advanced monitoring, managed secrets, and SLA/error-budget tracking are not implemented.
 
 ## Future Work
 
 - Add richer deployment backends such as GCP Compute Engine, Azure VM, or Kubernetes.
 - Replace static provider data with live pricing and region availability.
 - Add richer deployment logs and rollback handling.
-- Add database migrations, admin roles, and richer audit trails.
+- Add production packaging with Docker, Gunicorn, Sentry, security headers, and managed deployment infrastructure.
 - Replace raw cloud credential forms with cloud OAuth, role assumption, short-lived credentials, or managed identity flows.
+- Add payment/subscription billing, team workspaces, advanced monitoring, SLA/error budgets, and Kubernetes support.

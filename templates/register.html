@@ -9,6 +9,7 @@
         </div>
     {% endif %}
     <form method="post" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Name
             <input type="text" name="name" value="{{ name or '' }}" required>
         </label>

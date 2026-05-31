@@ -97,6 +97,12 @@ def select_provider(
         "execution_cloud": execution_provider,
         "reason": reason,
         "evaluated_providers": evaluated,
+        "audit_trail": {
+            "chosen_provider": selected_provider,
+            "execution_provider": execution_provider,
+            "decision_reason": reason,
+            "provider_evaluations": evaluated,
+        },
     }
 
 
@@ -142,7 +148,7 @@ def _evaluate_provider(
     eligible = not rejection_reasons
     score = 0.0
     if eligible:
-        score = _score_provider(profile, estimated_cost, min_uptime, preferred_region)
+        score = _score_provider(profile, estimated_cost, max_cost, min_uptime, preferred_region)
 
     return {
         "provider": name,
@@ -154,6 +160,12 @@ def _evaluate_provider(
         "uptime_percent": uptime,
         "score": round(score, 2),
         "rejection_reasons": rejection_reasons,
+        "exclusion_reason": "; ".join(rejection_reasons),
+        "region_support_notes": (
+            f"Preferred region '{preferred_region}' is supported."
+            if preferred_region and preferred_region in regions
+            else f"Supported regions: {', '.join(regions)}."
+        ),
         "execution_supported": profile["execution_supported"],
     }
 
@@ -161,10 +173,14 @@ def _evaluate_provider(
 def _score_provider(
     profile: Dict[str, Any],
     estimated_cost: float,
+    max_budget: Optional[float],
     min_uptime: Optional[float],
     preferred_region: Optional[str],
 ) -> float:
-    cost_score = max(0.0, 100.0 - float(estimated_cost))
+    if max_budget:
+        cost_score = max(0.0, (1 - (float(estimated_cost) / float(max_budget))) * 50)
+    else:
+        cost_score = max(0.0, 100.0 - float(estimated_cost))
     uptime_margin = float(profile["uptime_percent"]) - float(min_uptime or 0)
     uptime_score = max(0.0, uptime_margin * 10)
     region_bonus = 5.0 if preferred_region and preferred_region in profile["regions"] else 0.0

@@ -101,7 +101,7 @@ def test_missing_key_blocks_saving_credentials(monkeypatch):
     response = client.post("/cloud/aws/connect", data=aws_form())
 
     assert response.status_code == 400
-    assert b"CREDENTIAL_ENCRYPTION_KEY" in response.data
+    assert b"Credential encryption key is not configured" in response.data
 
 
 def test_cloud_account_crud_and_secret_rendering(monkeypatch):

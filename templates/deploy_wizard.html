@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Deployment Wizard{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Deployment Wizard</span>
+    <h1>Build deployment YAML</h1>
+    <p class="empty">The wizard creates the same YAML schema used by uploads, then sends it through validation, provider selection, readiness, image checks, and dry-run planning.</p>
+    {% if quota %}
+        <div class="summary-grid">
+            <div class="summary-card"><span class="label">Active Real Deployments</span><strong>{{ quota.active_count }}/{{ quota.active_limit }}</strong></div>
+            <div class="summary-card"><span class="label">Real Deployments Today</span><strong>{{ quota.real_today_count }}/{{ quota.real_today_limit }}</strong></div>
+            <div class="summary-card"><span class="label">Monthly Cost Limit</span><strong>${{ quota.monthly_cost_limit_usd }}</strong></div>
+        </div>
+    {% endif %}
+</section>
+
+<form method="post" class="panel stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <section>
+        <span class="label">Step 1</span>
+        <h2>Choose app type</h2>
+        <label>App Type
+            <select name="app_type">
+                <option value="api">api</option>
+                <option value="static-web">static-web</option>
+                <option value="ml-api">ml-api</option>
+            </select>
+        </label>
+    </section>
+
+    <section>
+        <span class="label">Step 2</span>
+        <h2>App details</h2>
+        <div class="form-row">
+            <label>App Name <input name="app_name" value="wizard-api" required></label>
+            <label>Docker Image <input name="image" value="dockertalha19/fyp-books-api:latest" required></label>
+        </div>
+        <div class="form-row">
+            <label>Port <input name="port" type="number" min="1" max="65535" value="8000" required></label>
+            <label>Health Check Path <input name="health_check" value="/health"></label>
+        </div>
+        <label>Access
+            <select name="public_access">
+                <option value="true">public</option>
+                <option value="false">private</option>
+            </select>
+        </label>
+    </section>
+
+    <section>
+        <span class="label">Step 3</span>
+        <h2>Requirements</h2>
+        <div class="form-row">
+            <label>Budget USD/month <input name="budget" type="number" min="1" step="0.01" value="30"></label>
+            <label>Uptime % <input name="uptime" type="number" min="0" max="100" step="0.01" value="99.9"></label>
+        </div>
+        <div class="form-row">
+            <label>Region
+                <select name="preferred_region">
+                    <option value="asia">asia</option>
+                    <option value="europe">europe</option>
+                    <option value="us">us</option>
+                </select>
+            </label>
+            <label>Provider Mode
+                <select name="provider_mode">
+                    <option value="auto">auto</option>
+                    <option value="AWS">manual AWS</option>
+                    <option value="Azure">manual Azure</option>
+                    <option value="GCP">manual GCP</option>
+                </select>
+            </label>
+        </div>
+    </section>
+
+    <section>
+        <span class="label">Step 4</span>
+        <h2>Review</h2>
+        <p class="notice">Dry-run is recommended for demos. Real deployment still requires safety flags, connected cloud account, provider readiness, billing acknowledgement, and approval.</p>
+        <button type="submit">Generate YAML and Dry-run</button>
+    </section>
+</form>
+{% endblock %}

@@ -9,6 +9,7 @@ from decision_engine import select_provider
 from diagnostics import build_diagnostics
 from deployment_history import add_deployment_record, get_deployment_record, update_deployment_record
 from docker_image_validation import validate_docker_images
+from health_checks import check_urls_with_retries
 from pricing.models import PriceEstimate
 from pricing.pricing_service import get_price_estimates
 from provider_bootstrap import generate_provider_bootstrap_plan
@@ -77,6 +78,7 @@ def deploy_app(
         "validation_errors": [],
         "warnings": validated.get("warnings", []),
         "decision": decision,
+        "decision_audit_trail": decision.get("audit_trail", {}),
         "pricing": _pricing_to_dict(pricing_estimates),
         "provider_readiness": {},
         "docker_image_validation": image_validation,
@@ -328,16 +330,35 @@ def deploy_app(
     health_check = provider.health_check(deployment) if deployment.get("status") == "deployed" else _skipped_health(
         "Health check skipped because deployment did not complete successfully."
     )
+    result_status = deployment.get("status", "unknown")
+    cleanup_result = {}
+    if result_status == "deployed" and health_check.get("result") == "failed":
+        result_status = "cleanup_required"
+        if _env_bool("AUTO_TERMINATE_ON_FAILURE"):
+            cleanup_result = cleanup_deployment_record(
+                _history_like_record(
+                    {
+                        **result,
+                        "status": "deployed",
+                        "deployment_mode": "real",
+                        "decision": decision,
+                        "deployment": deployment,
+                    }
+                ),
+                cloud_account=selected_cloud_account,
+                require_cloud_account=require_cloud_account,
+            )
 
     result.update(
         {
-            "status": deployment.get("status", "unknown"),
+            "status": result_status,
             "deployment_mode": "real",
             "deployment": deployment,
             "generated_commands": deployment.get("generated_commands", []),
             "public_ip": deployment.get("public_ip"),
             "public_endpoints": endpoints,
             "health_check": health_check,
+            "cleanup_result": cleanup_result,
         }
     )
     result["deployment_steps"].append(f"Execution provider: {execution_provider}")
@@ -486,6 +507,7 @@ def build_deployment_report(deployment_id: str) -> Optional[str]:
 
 
 def _finalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    result["decision_audit_trail"] = result.get("decision", {}).get("audit_trail", result.get("decision_audit_trail", {}))
     result["diagnostics"] = _diagnostics_for_result(result)
     add_deployment_record(result)
     return result
@@ -545,13 +567,37 @@ def _log_commands_for_result(result: Dict[str, Any]) -> list[Dict[str, Any]]:
 
 def _history_like_record(result: Dict[str, Any]) -> Dict[str, Any]:
     deployment = result.get("deployment", {})
+    decision = result.get("decision", {})
     return {
         "app_name": result.get("app"),
+        "provider": deployment.get("provider"),
+        "selected_provider": decision.get("selected_provider") or deployment.get("provider"),
+        "execution_provider": decision.get("execution_provider") or deployment.get("provider"),
+        "status": result.get("status") or deployment.get("status"),
+        "deployment_mode": result.get("deployment_mode") or deployment.get("deployment_mode"),
         "instance_id": deployment.get("instance_id"),
         "app_names": deployment.get("app_names", []),
         "service_names": deployment.get("service_names", []),
         "deployment": deployment,
     }
+
+
+def _deployment_health_check(deployment: Dict[str, Any]) -> Dict[str, Any]:
+    endpoints = deployment.get("service_endpoints") or deployment.get("endpoints") or []
+    path = deployment.get("health_check_path", "/")
+    urls = [_health_url(endpoint.get("url"), path) for endpoint in endpoints if endpoint.get("url")]
+    return check_urls_with_retries(urls, int(os.getenv("DEPLOYMENT_TIMEOUT_SECONDS", "180")))
+
+
+def _health_url(url: Optional[str], path: str) -> Optional[str]:
+    if not url:
+        return None
+    if not path or path == "/":
+        return url
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(path=path, query="", fragment=""))
 
 
 def _first_service(config: Dict[str, Any]) -> Dict[str, Any]:

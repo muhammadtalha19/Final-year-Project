@@ -90,4 +90,5 @@ def _record_from_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "cleanup_result": result.get("cleanup_result", {}),
         "decision_reason": decision.get("reason"),
         "evaluated_providers": decision.get("evaluated_providers", []),
+        "decision_audit_trail": decision.get("audit_trail", result.get("decision_audit_trail", {})),
     }

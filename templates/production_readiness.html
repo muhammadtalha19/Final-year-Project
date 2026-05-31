@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Production Readiness{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Production MVP</span>
+    <h1>Production Readiness Checklist</h1>
+    <p class="empty">This page separates what is implemented for the controlled SME beta demo from what belongs in a later production hardening cycle.</p>
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>Implemented</h2>
+        <div class="checklist">
+            {% for item in implemented %}
+                <p><span class="status success">done</span> {{ item }}</p>
+            {% endfor %}
+        </div>
+    </article>
+
+    <article class="panel">
+        <h2>Production Future Work</h2>
+        <div class="checklist">
+            {% for item in future_work %}
+                <p><span class="status warning">future</span> {{ item }}</p>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+
+<section class="panel">
+    <h2>Infrastructure Note</h2>
+    {% if phase13_skipped %}
+        <p class="notice">Docker/Gunicorn/Sentry/security-header work was intentionally skipped in this pass to conserve usage and avoid risky backend refactors.</p>
+    {% endif %}
+    <p>Real deployments remain controlled by safety flags, connected user-owned cloud accounts, provider readiness, billing acknowledgement, and confirmation.</p>
+</section>
+{% endblock %}

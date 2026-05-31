@@ -47,5 +47,5 @@ def mask_secret(value: str) -> str:
 def _fernet() -> Fernet:
     key = os.getenv("CREDENTIAL_ENCRYPTION_KEY")
     if not key:
-        raise RuntimeError("CREDENTIAL_ENCRYPTION_KEY is not configured. Cloud credentials were not saved.")
+        raise RuntimeError("Credential encryption key is not configured.")
     return Fernet(key.encode("utf-8"))

@@ -7,10 +7,12 @@
     <div class="action-list">
         <a class="button secondary" href="{{ url_for('deployment_report', deployment_id=record.id) }}">Report</a>
         <form class="inline-form" method="post" action="{{ url_for('refresh_deployment', deployment_id=record.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="button secondary">Refresh</button>
         </form>
         {% if record.deployment_mode == 'real' and record.status == 'deployed' %}
             <form class="inline-form" method="post" action="{{ url_for('delete_saved_deployment', deployment_id=record.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="delete-button">Delete</button>
             </form>
         {% endif %}

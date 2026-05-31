@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Admin</span>
+    <h1>Platform Overview</h1>
+    <p class="empty">Admin pages show operational metadata only. Cloud secrets and OAuth secrets are never displayed.</p>
+    <div class="action-list">
+        <a class="button secondary" href="{{ url_for('admin_users') }}">Users</a>
+        <a class="button secondary" href="{{ url_for('admin_deployments') }}">Deployments</a>
+        <a class="button secondary" href="{{ url_for('audit_logs') }}">Audit Logs</a>
+    </div>
+</section>
+
+<section class="summary-grid">
+    <div class="summary-card"><span class="label">Users</span><strong>{{ user_count }}</strong></div>
+    <div class="summary-card"><span class="label">Deployments</span><strong>{{ deployment_count }}</strong></div>
+    <div class="summary-card"><span class="label">Dry-runs</span><strong>{{ analytics.dry_run }}</strong></div>
+    <div class="summary-card"><span class="label">Real</span><strong>{{ analytics.real }}</strong></div>
+    <div class="summary-card"><span class="label">Failed</span><strong>{{ analytics.failed }}</strong></div>
+</section>
+
+<section class="panel">
+    <h2>Latest Deployments</h2>
+    {% include "_deployment_table.html" with context %}
+</section>
+{% endblock %}

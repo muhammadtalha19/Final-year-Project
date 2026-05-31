@@ -17,11 +17,18 @@
                 {% if current_user.is_authenticated %}
                     <a href="{{ url_for('dashboard') }}">Dashboard</a>
                     <a href="{{ url_for('deploy_new') }}">Deploy</a>
+                    <a href="{{ url_for('deploy_wizard') }}">Wizard</a>
                     <a href="{{ url_for('deployments') }}">History</a>
                     <a href="{{ url_for('cloud_accounts') }}">Cloud Accounts</a>
                     <a href="{{ url_for('providers') }}">Providers</a>
                     <a href="{{ url_for('templates_library') }}">Templates</a>
+                    <a href="{{ url_for('demo_scenarios') }}">Demos</a>
+                    <a href="{{ url_for('production_readiness') }}">Readiness</a>
+                    <a href="{{ url_for('audit_logs') }}">Audit</a>
                     <a href="{{ url_for('settings') }}">Settings</a>
+                    {% if current_user.role == 'admin' %}
+                        <a href="{{ url_for('admin_dashboard') }}">Admin</a>
+                    {% endif %}
                     <a class="secondary" href="{{ url_for('logout') }}">Logout</a>
                 {% else %}
                     <a href="{{ url_for('login') }}">Login</a>

@@ -1,8 +1,11 @@
 import os
+import logging
+from functools import wraps
+from uuid import uuid4
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, g, has_request_context, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -19,25 +22,67 @@ from auth import begin_oauth, complete_oauth, init_auth, oauth_status
 from config_schema import ConfigValidationError, validate_config
 from credential_vault import is_encryption_configured
 from database import db, init_database
-from models import CloudAccount, DeploymentRecord, User, auto_cleanup_delta, find_due_cleanups
+from models import AuditLog, CloudAccount, DeploymentRecord, User, auto_cleanup_delta, find_due_cleanups
 from orchestrator import cleanup_deployment_record, deploy_app
 from provider_bootstrap import generate_provider_bootstrap_plan
 from provider_readiness import check_provider_readiness
+from queue_utils import enqueue_deployment
+
+try:
+    from flask_wtf.csrf import CSRFProtect, generate_csrf
+except ImportError:  # pragma: no cover - dependency is declared for production installs.
+    class CSRFProtect:
+        def __init__(self, app=None):
+            return None
+
+    def generate_csrf():
+        return ""
+
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+except ImportError:  # pragma: no cover - dependency is declared for production installs.
+    class Limiter:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def init_app(self, app):
+            return None
+
+        def limit(self, *args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+
+    def get_remote_address():
+        return "127.0.0.1"
+
+try:
+    from flask_migrate import Migrate
+except ImportError:  # pragma: no cover - dependency is declared for production installs.
+    class Migrate:
+        def __init__(self, *args, **kwargs):
+            return None
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+from config import get_config_class
 
 app = Flask(__name__, instance_relative_config=True)
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-only-change-me")
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{os.path.join(app.instance_path, 'orchestrator.db')}",
-)
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+config_class = get_config_class()
+app.config.from_object(config_class)
+config_class.init_app(app)
 os.makedirs(app.instance_path, exist_ok=True)
 
 init_database(app)
+migrate = Migrate(app, db)
 init_auth(app)
+csrf = CSRFProtect(app)
+limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"))
+limiter.init_app(app)
+
+MAX_YAML_BYTES = 65536
 
 config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 try:
@@ -215,6 +260,37 @@ requirements:
 }
 
 
+DEMO_SCENARIOS = [
+    {
+        "title": "Static Web App",
+        "name": "Expense Tracker React",
+        "image": "dockertalha19/expense-tracker-react:latest",
+        "port": 80,
+        "health": "/",
+        "template": "static-react",
+        "story": "A small SME expense tracker frontend needs a public URL without hand-configuring cloud consoles.",
+    },
+    {
+        "title": "Backend API",
+        "name": "FastAPI Books API",
+        "image": "dockertalha19/fyp-books-api:latest",
+        "port": 8000,
+        "health": "/health",
+        "template": "fastapi-api",
+        "story": "A backend service needs cost-aware provider selection and a health-checked endpoint.",
+    },
+    {
+        "title": "ML API",
+        "name": "FYP ML API",
+        "image": "dockertalha19/fyp-ml-api:latest",
+        "port": 8000,
+        "health": "/health",
+        "template": "ml-api",
+        "story": "A lightweight ML inference API needs a repeatable dry-run deployment plan for demo review.",
+    },
+]
+
+
 PROVIDERS = ["AWS", "Azure", "GCP"]
 
 
@@ -254,7 +330,89 @@ def inject_portal_context():
         "safety_flags": _safety_flags(),
         "status_class": _status_class,
         "format_dt": _format_dt,
+        "csrf_token": generate_csrf,
+        "deployment_timeline": build_deployment_timeline,
     }
+
+
+@app.before_request
+def attach_request_id():
+    g.request_id = uuid4().hex
+
+
+@app.after_request
+def add_request_id(response):
+    response.headers["X-Request-ID"] = getattr(g, "request_id", uuid4().hex)
+    return response
+
+
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if current_user.role != "admin":
+            abort(403)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+SECRET_METADATA_MARKERS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "CREDENTIAL", "ACCESS_KEY", "REFRESH_TOKEN")
+
+
+def record_audit_event(
+    action: str,
+    entity_type: str = "",
+    entity_id: str = "",
+    provider: str = "",
+    message: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
+) -> None:
+    if user_id is None and has_request_context() and current_user.is_authenticated:
+        user_id = current_user.id
+    log = AuditLog(
+        user_id=user_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=str(entity_id) if entity_id else None,
+        provider=provider or None,
+        message=message,
+        metadata_json=_safe_audit_metadata(metadata or {}),
+        request_id=getattr(g, "request_id", None) if has_request_context() else None,
+    )
+    db.session.add(log)
+    db.session.commit()
+
+
+def _safe_audit_metadata(value):
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            key_string = str(key)
+            if _looks_secret_key(key_string):
+                safe[key_string] = "[redacted]"
+            else:
+                safe[key_string] = _safe_audit_metadata(item)
+        return safe
+    if isinstance(value, list):
+        return [_safe_audit_metadata(item) for item in value]
+    if isinstance(value, str) and _looks_secret_value(value):
+        return "[redacted]"
+    return value
+
+
+def _looks_secret_key(key: str) -> bool:
+    key_upper = key.upper()
+    return any(marker in key_upper for marker in SECRET_METADATA_MARKERS)
+
+
+def _looks_secret_value(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if "-----BEGIN" in stripped or "PRIVATE KEY" in stripped:
+        return True
+    return False
 
 
 @app.route("/", methods=["GET"])
@@ -263,6 +421,7 @@ def landing():
 
 
 @app.route("/register", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def register():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
@@ -285,12 +444,20 @@ def register():
         )
         db.session.add(user)
         db.session.commit()
+        record_audit_event(
+            "user_registered",
+            entity_type="user",
+            entity_id=str(user.id),
+            user_id=user.id,
+            message="User registered with email/password.",
+        )
         login_user(user)
         return redirect(url_for("dashboard"))
     return render_template("register.html", errors=[])
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
@@ -303,6 +470,13 @@ def login():
         user.last_login_at = datetime.utcnow()
         db.session.commit()
         login_user(user)
+        record_audit_event(
+            "user_login",
+            entity_type="user",
+            entity_id=str(user.id),
+            user_id=user.id,
+            message="User logged in with email/password.",
+        )
         return redirect(url_for("dashboard"))
     return render_template("login.html")
 
@@ -315,9 +489,17 @@ def oauth_start(provider):
 @app.route("/auth/<provider>/callback", methods=["GET"])
 def oauth_callback(provider):
     try:
-        complete_oauth(provider)
+        user = complete_oauth(provider)
     except Exception:
         return render_template("login.html", error="OAuth login failed or is not configured."), 400
+    record_audit_event(
+        "oauth_login",
+        entity_type="user",
+        entity_id=str(user.id),
+        provider=provider,
+        user_id=user.id,
+        message=f"User logged in with {provider}.",
+    )
     return redirect(url_for("dashboard"))
 
 
@@ -337,6 +519,59 @@ def dashboard():
     return render_template("dashboard.html", analytics=analytics, latest=deployments[:5], readiness=readiness)
 
 
+@app.route("/admin", methods=["GET"])
+@login_required
+@admin_required
+def admin_dashboard():
+    deployments = DeploymentRecord.query.order_by(DeploymentRecord.created_at.desc()).all()
+    users = User.query.order_by(User.created_at.desc()).all()
+    return render_template(
+        "admin.html",
+        deployment_count=len(deployments),
+        user_count=len(users),
+        analytics=_deployment_analytics(deployments),
+        latest=deployments[:10],
+    )
+
+
+@app.route("/admin/deployments", methods=["GET"])
+@login_required
+@admin_required
+def admin_deployments():
+    deployments = DeploymentRecord.query.order_by(DeploymentRecord.created_at.desc()).all()
+    return render_template("admin_deployments.html", deployments=deployments)
+
+
+@app.route("/admin/users", methods=["GET"])
+@login_required
+@admin_required
+def admin_users():
+    users = User.query.order_by(User.created_at.desc()).all()
+    deployment_counts = {
+        user_id: count
+        for user_id, count in db.session.query(DeploymentRecord.user_id, db.func.count(DeploymentRecord.id)).group_by(DeploymentRecord.user_id)
+    }
+    connected_counts = {
+        user_id: count
+        for user_id, count in db.session.query(CloudAccount.user_id, db.func.count(CloudAccount.id)).group_by(CloudAccount.user_id)
+    }
+    return render_template(
+        "admin_users.html",
+        users=users,
+        deployment_counts=deployment_counts,
+        connected_counts=connected_counts,
+    )
+
+
+@app.route("/audit", methods=["GET"])
+@login_required
+def audit_logs():
+    query = AuditLog.query.order_by(AuditLog.created_at.desc())
+    if current_user.role != "admin":
+        query = query.filter_by(user_id=current_user.id)
+    return render_template("audit.html", logs=query.limit(200).all())
+
+
 @app.route("/deploy/new", methods=["GET", "POST"])
 @login_required
 def deploy_new():
@@ -349,7 +584,38 @@ def deploy_new():
         prefilled_yaml=prefilled_yaml,
         selected_template=template_key,
         cloud_accounts=_cloud_account_summaries(current_user.id),
+        quota=_deployment_quota_snapshot(current_user.id),
     )
+
+
+@app.route("/deploy/wizard", methods=["GET", "POST"])
+@login_required
+def deploy_wizard():
+    if request.method == "POST":
+        deployment_config = _wizard_config_from_form(request.form)
+        generated_yaml = yaml.safe_dump(deployment_config, sort_keys=False)
+        result = deploy_app(
+            deployment_config,
+            cloud_accounts=_cloud_account_map(current_user.id),
+            require_cloud_account=True,
+        )
+        result["billing_safety"] = _billing_safety_summary(current_user.id, result)
+        record = _save_deployment_result(
+            current_user.id,
+            generated_yaml,
+            result,
+            request.form.get("auto_cleanup_after", "none"),
+        )
+        record_audit_event(
+            "deployment_dry_run" if result.get("status") == "dry_run" else "deployment_requested",
+            entity_type="deployment",
+            entity_id=record.id,
+            provider=record.execution_provider,
+            message=f"Wizard deployment recorded with status {record.status}.",
+            metadata={"status": record.status, "source": "wizard"},
+        )
+        return render_template("deploy_result.html", record=record, result=result)
+    return render_template("deploy_wizard.html", quota=_deployment_quota_snapshot(current_user.id))
 
 
 @app.route("/deploy", methods=["POST"])
@@ -382,14 +648,63 @@ def deployment_detail(deployment_id):
 def confirm_deployment(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
     config = yaml.safe_load(record.yaml_content)
-    result = deploy_app(
+    preflight = deploy_app(
         config,
+        execute=False,
         confirm_real_deployment=True,
         cloud_accounts=_cloud_account_map(current_user.id),
         require_cloud_account=True,
     )
+    if preflight.get("status") in {"cloud_account_required", "provider_not_ready", "image_validation_failed", "blocked_by_safety_flag"}:
+        record.apply_result(preflight, yaml_content=record.yaml_content)
+        db.session.commit()
+        record_audit_event(
+            "deployment_real_requested",
+            entity_type="deployment",
+            entity_id=record.id,
+            provider=record.execution_provider,
+            message=f"Real deployment blocked with status {record.status}.",
+            metadata={"status": record.status},
+        )
+        return render_template("deploy_result.html", record=record, result=preflight)
+
+    safety_block = _real_deployment_safety_block(
+        current_user.id,
+        preflight,
+        billing_acknowledged=request.form.get("billing_acknowledgement") == "yes",
+    )
+    if safety_block:
+        record.apply_result(safety_block, yaml_content=record.yaml_content)
+        db.session.commit()
+        action = "deployment_blocked_by_billing_ack" if record.status == "blocked_by_billing_ack" else "deployment_blocked_by_quota"
+        record_audit_event(
+            action,
+            entity_type="deployment",
+            entity_id=record.id,
+            provider=record.execution_provider,
+            message=safety_block.get("deployment", {}).get("message", "Real deployment blocked by safety policy."),
+            metadata={"status": record.status},
+        )
+        return render_template("deploy_result.html", record=record, result=safety_block)
+
+    queue_result = enqueue_deployment(record.id)
+    result = dict(record.result_json or {})
+    result["status"] = "queued" if queue_result.queued else "failed"
+    result["deployment_mode"] = "real"
+    result.setdefault("deployment", {})["status"] = result["status"]
+    result["deployment"]["message"] = queue_result.message
+    result["job_id"] = queue_result.job_id
+    result["billing_safety"] = _billing_safety_summary(current_user.id, preflight)
     record.apply_result(result, yaml_content=record.yaml_content)
     db.session.commit()
+    record_audit_event(
+        "deployment_real_requested",
+        entity_type="deployment",
+        entity_id=record.id,
+        provider=record.execution_provider,
+        message="Real deployment queued for background execution.",
+        metadata={"status": record.status, "job_id": queue_result.job_id},
+    )
     return render_template("deploy_result.html", record=record, result=result)
 
 
@@ -410,6 +725,14 @@ def delete_saved_deployment(deployment_id):
     record.apply_result(result)
     record.cleanup_status = delete_result["status"]
     db.session.commit()
+    record_audit_event(
+        "deployment_deleted",
+        entity_type="deployment",
+        entity_id=record.id,
+        provider=record.execution_provider,
+        message=delete_result.get("message", "Deployment cleanup requested."),
+        metadata={"status": delete_result.get("status")},
+    )
     flash(delete_result["message"])
     return redirect(url_for("deployment_detail", deployment_id=record.id))
 
@@ -428,6 +751,21 @@ def refresh_deployment(deployment_id):
     db.session.commit()
     flash(health_result.get("message", "Deployment status refreshed."))
     return redirect(url_for("deployment_detail", deployment_id=record.id))
+
+
+@app.route("/deployments/<deployment_id>/status", methods=["GET"])
+@login_required
+def deployment_status(deployment_id):
+    record = _owned_deployment_or_404(deployment_id)
+    return jsonify(
+        {
+            "status": record.status,
+            "health_status": record.health_status,
+            "public_url": record.endpoint,
+            "message": (record.result_json or {}).get("deployment", {}).get("message"),
+            "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        }
+    )
 
 
 @app.route("/deployments/<deployment_id>/cleanup-if-due", methods=["POST"])
@@ -506,13 +844,56 @@ def templates_library():
     return render_template("templates.html", templates=YAML_TEMPLATES)
 
 
+@app.route("/demo-scenarios", methods=["GET"])
+@login_required
+def demo_scenarios():
+    return render_template("demo_scenarios.html", scenarios=DEMO_SCENARIOS, templates=YAML_TEMPLATES)
+
+
+@app.route("/production-readiness", methods=["GET"])
+@login_required
+def production_readiness():
+    implemented = [
+        "authentication",
+        "OAuth",
+        "encrypted cloud credentials",
+        "user-owned cloud accounts",
+        "dry-run",
+        "approval gate",
+        "provider readiness",
+        "billing acknowledgement",
+        "quotas",
+        "deployment reports",
+        "cleanup",
+        "audit logs",
+        "background job support",
+    ]
+    future_work = [
+        "managed secrets",
+        "cloud role-based auth instead of raw keys",
+        "payment/subscription billing",
+        "team workspaces",
+        "advanced monitoring",
+        "SLA/error budgets",
+        "Kubernetes support",
+    ]
+    return render_template(
+        "production_readiness.html",
+        implemented=implemented,
+        future_work=future_work,
+        phase13_skipped=True,
+    )
+
+
 @app.route("/cloud/accounts", methods=["GET"])
 @login_required
 def cloud_accounts():
+    readiness = _provider_readiness_summary(include_bootstrap=False)
     return render_template(
         "cloud_accounts.html",
         providers=PROVIDERS,
         accounts=_cloud_account_summaries(current_user.id),
+        readiness_by_provider={item["provider"]: item["readiness"] for item in readiness},
         encryption_configured=is_encryption_configured(),
     )
 
@@ -529,7 +910,7 @@ def connect_cloud_account(provider):
         errors, credentials = _cloud_account_credentials_from_form(provider_name)
         display_name = request.form.get("display_name", "").strip() or f"{provider_name} account"
         if not is_encryption_configured():
-            errors.append("CREDENTIAL_ENCRYPTION_KEY is not configured. Cloud credentials were not saved.")
+            errors.append("Credential encryption key is not configured.")
         if errors:
             return render_template(
                 "cloud_account_form.html",
@@ -545,6 +926,14 @@ def connect_cloud_account(provider):
             account.set_credentials(credentials)
             db.session.add(account)
             db.session.commit()
+            record_audit_event(
+                "cloud_account_connected",
+                entity_type="cloud_account",
+                entity_id=str(account.id),
+                provider=provider_name,
+                message=f"{provider_name} cloud account connected or updated.",
+                metadata={"display_name": display_name},
+            )
         except (RuntimeError, ValueError) as exc:
             db.session.rollback()
             return render_template(
@@ -583,6 +972,13 @@ def delete_cloud_account(account_id):
     provider_name = account.provider
     db.session.delete(account)
     db.session.commit()
+    record_audit_event(
+        "cloud_account_deleted",
+        entity_type="cloud_account",
+        entity_id=str(account_id),
+        provider=provider_name,
+        message=f"{provider_name} cloud account disconnected.",
+    )
     flash(f"{provider_name} cloud account disconnected.")
     return redirect(url_for("cloud_accounts"))
 
@@ -591,34 +987,26 @@ def _handle_deploy_submission():
     uploaded_file = request.files.get("config_file")
     textarea_content = request.form.get("yaml_content", "").strip()
     if textarea_content:
+        if len(textarea_content.encode("utf-8")) > MAX_YAML_BYTES:
+            return _deploy_form_error("YAML input is too large. Maximum allowed size is 64 KB.", textarea_content)
         yaml_content = textarea_content
         if uploaded_file and uploaded_file.filename:
             flash("Textarea YAML was used because both textarea and file upload were provided.")
     elif uploaded_file and uploaded_file.filename:
         try:
-            yaml_content = uploaded_file.read().decode("utf-8")
+            raw_content = uploaded_file.read(MAX_YAML_BYTES + 1)
+            if len(raw_content) > MAX_YAML_BYTES:
+                return _deploy_form_error("YAML input is too large. Maximum allowed size is 64 KB.")
+            yaml_content = raw_content.decode("utf-8")
         except Exception as exc:
-            return render_template(
-                "deploy_new.html",
-                errors=[f"Could not read YAML file: {exc}"],
-                cloud_accounts=_cloud_account_summaries(current_user.id),
-            ), 400
+            return _deploy_form_error(f"Could not read YAML file: {exc}")
     else:
-        return render_template(
-            "deploy_new.html",
-            errors=["Provide a YAML file or paste YAML content."],
-            cloud_accounts=_cloud_account_summaries(current_user.id),
-        ), 400
+        return _deploy_form_error("Provide a YAML file or paste YAML content.")
 
     try:
         deployment_config = yaml.safe_load(yaml_content)
     except Exception as exc:
-        return render_template(
-            "deploy_new.html",
-            errors=[f"Invalid YAML file: {exc}"],
-            prefilled_yaml=yaml_content,
-            cloud_accounts=_cloud_account_summaries(current_user.id),
-        ), 400
+        return _deploy_form_error(f"Invalid YAML file: {exc}", yaml_content)
 
     _apply_cloud_selection_override(deployment_config, request.form.get("cloud_selection", "yaml"))
     effective_yaml = yaml.safe_dump(deployment_config, sort_keys=False)
@@ -627,13 +1015,45 @@ def _handle_deploy_submission():
         cloud_accounts=_cloud_account_map(current_user.id),
         require_cloud_account=True,
     )
+    result["billing_safety"] = _billing_safety_summary(current_user.id, result)
     record = _save_deployment_result(
         current_user.id,
         effective_yaml,
         result,
         request.form.get("auto_cleanup_after", "none"),
     )
+    if result.get("status") == "dry_run":
+        action = "deployment_dry_run"
+    elif result.get("status") == "approval_required":
+        action = "deployment_real_requested"
+    else:
+        action = "deployment_requested"
+    record_audit_event(
+        action,
+        entity_type="deployment",
+        entity_id=record.id,
+        provider=record.execution_provider,
+        message=f"Deployment flow recorded with status {record.status}.",
+        metadata={"status": record.status, "deployment_mode": record.deployment_mode},
+    )
     return render_template("deploy_result.html", record=record, result=result)
+
+
+def _deploy_form_error(message: str, prefilled_yaml: str = ""):
+    if current_user.is_authenticated:
+        record_audit_event(
+            "security_validation_failed",
+            entity_type="deployment",
+            message=message,
+            metadata={"reason": message},
+        )
+    return render_template(
+        "deploy_new.html",
+        errors=[message],
+        prefilled_yaml=prefilled_yaml,
+        cloud_accounts=_cloud_account_summaries(current_user.id),
+        quota=_deployment_quota_snapshot(current_user.id),
+    ), 400
 
 
 def _save_deployment_result(user_id: int, yaml_content: str, result: Dict[str, Any], cleanup_after: str = "none") -> DeploymentRecord:
@@ -679,6 +1099,39 @@ def _apply_cloud_selection_override(deployment_config, cloud_selection):
     override = selection_map.get(cloud_selection)
     if override:
         deployment_config["selection"] = override
+
+
+def _wizard_config_from_form(form) -> Dict[str, Any]:
+    provider_mode = form.get("provider_mode", "auto")
+    app_name = form.get("app_name", "wizard-api").strip()
+    public_access = form.get("public_access", "true") == "true"
+    selection = {"mode": "auto"}
+    if provider_mode in {"AWS", "Azure", "GCP"}:
+        selection = {"mode": "manual", "provider": provider_mode}
+
+    return {
+        "app": {
+            "name": app_name,
+            "environment": form.get("environment", "production"),
+            "type": form.get("app_type", "api"),
+        },
+        "services": [
+            {
+                "name": app_name,
+                "image": form.get("image", "").strip(),
+                "port": int(form.get("port", "8000") or 8000),
+                "public": public_access,
+            }
+        ],
+        "requirements": {
+            "max_monthly_cost_usd": float(form.get("budget", "30") or 30),
+            "min_uptime_percent": float(form.get("uptime", "99.9") or 99.9),
+            "preferred_region": form.get("preferred_region", "asia"),
+            "public_access": public_access,
+        },
+        "selection": selection,
+        "health_check": form.get("health_check", "/health") or "/",
+    }
 
 
 def _cloud_account_for_user(user_id: int, provider: Optional[str]):
@@ -768,6 +1221,150 @@ def _readiness_probe_config() -> Dict[str, Any]:
         return validate_config(raw)
     except ConfigValidationError:
         return raw
+
+
+ACTIVE_REAL_STATUSES = {"queued", "running", "deployed", "cleanup_required"}
+REAL_ATTEMPT_STATUSES = {"queued", "running", "deployed", "failed", "cleanup_required", "deleted", "delete_failed"}
+
+
+def _deployment_quota_snapshot(user_id: int) -> Dict[str, Any]:
+    active_limit = int(app.config.get("MAX_ACTIVE_DEPLOYMENTS_PER_USER", 3))
+    daily_limit = int(app.config.get("MAX_REAL_DEPLOYMENTS_PER_DAY", 5))
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    active_count = DeploymentRecord.query.filter_by(user_id=user_id, deployment_mode="real").filter(
+        DeploymentRecord.status.in_(ACTIVE_REAL_STATUSES)
+    ).count()
+    real_today_count = DeploymentRecord.query.filter_by(user_id=user_id, deployment_mode="real").filter(
+        DeploymentRecord.created_at >= today_start,
+        DeploymentRecord.status.in_(REAL_ATTEMPT_STATUSES),
+    ).count()
+    return {
+        "active_count": active_count,
+        "active_limit": active_limit,
+        "real_today_count": real_today_count,
+        "real_today_limit": daily_limit,
+        "monthly_cost_limit_usd": float(app.config.get("MAX_MONTHLY_COST_LIMIT_USD", 50)),
+    }
+
+
+def _billing_safety_summary(user_id: int, result: Dict[str, Any]) -> Dict[str, Any]:
+    summary = _deployment_quota_snapshot(user_id)
+    summary["estimated_monthly_cost_usd"] = _selected_estimated_cost(result)
+    summary["billing_warning"] = "Real deployments create resources in your connected cloud account and may incur charges."
+    return summary
+
+
+def _real_deployment_safety_block(user_id: int, preflight: Dict[str, Any], billing_acknowledged: bool) -> Optional[Dict[str, Any]]:
+    if preflight.get("deployment_mode") != "real":
+        return None
+    if not billing_acknowledged:
+        return _blocked_deployment_result(
+            preflight,
+            "blocked_by_billing_ack",
+            "Real deployment requires billing acknowledgement before resources can be queued.",
+            user_id,
+        )
+
+    quota = _deployment_quota_snapshot(user_id)
+    if quota["active_count"] >= quota["active_limit"]:
+        return _blocked_deployment_result(
+            preflight,
+            "blocked_by_quota",
+            f"Active real deployment quota exceeded ({quota['active_count']}/{quota['active_limit']}).",
+            user_id,
+        )
+    if quota["real_today_count"] >= quota["real_today_limit"]:
+        return _blocked_deployment_result(
+            preflight,
+            "blocked_by_quota",
+            f"Daily real deployment quota exceeded ({quota['real_today_count']}/{quota['real_today_limit']}).",
+            user_id,
+        )
+
+    estimated_cost = _selected_estimated_cost(preflight)
+    if estimated_cost is not None and estimated_cost > quota["monthly_cost_limit_usd"]:
+        return _blocked_deployment_result(
+            preflight,
+            "blocked_by_cost_limit",
+            (
+                f"Estimated monthly cost ${estimated_cost:.2f} exceeds the platform safety limit "
+                f"of ${quota['monthly_cost_limit_usd']:.2f}."
+            ),
+            user_id,
+        )
+    return None
+
+
+def _blocked_deployment_result(result: Dict[str, Any], status: str, message: str, user_id: int) -> Dict[str, Any]:
+    blocked = dict(result)
+    blocked["status"] = status
+    blocked["billing_safety"] = _billing_safety_summary(user_id, result)
+    blocked.setdefault("deployment", {})
+    blocked["deployment"] = dict(blocked["deployment"])
+    blocked["deployment"]["status"] = status
+    blocked["deployment"]["message"] = message
+    blocked.setdefault("diagnostics", {})
+    blocked["diagnostics"] = dict(blocked["diagnostics"])
+    blocked["diagnostics"]["next_steps"] = [message]
+    return blocked
+
+
+def _selected_estimated_cost(result: Dict[str, Any]) -> Optional[float]:
+    decision = result.get("decision", {})
+    selected_provider = decision.get("selected_provider") or decision.get("execution_provider")
+    for provider in decision.get("evaluated_providers", []):
+        if provider.get("provider") == selected_provider:
+            try:
+                return float(provider.get("estimated_cost_usd"))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def build_deployment_timeline(result: Dict[str, Any]) -> list[Dict[str, str]]:
+    status = result.get("status") or "unknown"
+    deployment_mode = result.get("deployment_mode") or "dry_run"
+    health = result.get("health_check", {})
+    deployment = result.get("deployment", {})
+    timeline = [
+        {"label": "YAML received", "status": "completed", "message": "Deployment configuration was submitted."},
+        {
+            "label": "Validation passed" if not result.get("validation_errors") else "Validation failed",
+            "status": "completed" if not result.get("validation_errors") else "failed",
+            "message": "YAML schema and safety checks completed.",
+        },
+        {
+            "label": "Docker image validated",
+            "status": "completed" if result.get("docker_image_validation", {}).get("valid", True) else "failed",
+            "message": "Docker image input was checked without contacting a registry unless enabled.",
+        },
+        {"label": "Provider evaluation completed", "status": "completed", "message": result.get("decision", {}).get("reason", "")},
+        {
+            "label": "Cloud account checked",
+            "status": "completed" if result.get("cloud_account", {}).get("connected") else "warning",
+            "message": result.get("cloud_account", {}).get("message", "Cloud account status recorded."),
+        },
+    ]
+    if deployment_mode == "real":
+        if status in {"queued", "running", "deployed", "failed", "cleanup_required"}:
+            timeline.append({"label": "Billing acknowledgement confirmed", "status": "completed", "message": "User confirmed billable resource acknowledgement."})
+        if status in {"queued", "running", "deployed", "failed", "cleanup_required"}:
+            timeline.append({"label": "Deployment queued", "status": "completed", "message": deployment.get("message", "Background job queued.")})
+        if status in {"running", "deployed", "failed", "cleanup_required"}:
+            timeline.append({"label": "Deployment running", "status": "completed" if status in {"deployed", "failed", "cleanup_required"} else "running", "message": "Provider execution started."})
+    else:
+        timeline.append({"label": "Dry-run plan generated", "status": "completed", "message": "Generated provider-specific deployment plan."})
+        timeline.append({"label": "No cloud resources created", "status": "completed", "message": "Dry-run mode does not execute cloud commands."})
+
+    if result.get("public_endpoints"):
+        timeline.append({"label": "Public URL generated", "status": "completed", "message": result["public_endpoints"][0].get("url", "")})
+    if health.get("result") in {"passed", "failed"}:
+        timeline.append({"label": f"Health check {health.get('result')}", "status": health.get("result"), "message": health.get("message", "")})
+    if result.get("cleanup_result"):
+        timeline.append({"label": "Cleanup completed", "status": result["cleanup_result"].get("status", "completed"), "message": result["cleanup_result"].get("message", "")})
+    if status in {"failed", "cleanup_required"} and not health.get("result"):
+        timeline.append({"label": "Deployment failed", "status": "failed", "message": deployment.get("message", "Deployment did not complete successfully.")})
+    return timeline
 
 
 def _deployment_analytics(records):
@@ -900,7 +1497,7 @@ def _status_class(status: Optional[str]) -> str:
     status = (status or "").lower()
     if status in {"deployed", "passed", "deleted"}:
         return "success"
-    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready", "cloud_account_required"}:
+    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready", "cloud_account_required", "pending", "queued", "running", "blocked_by_billing_ack", "blocked_by_quota", "blocked_by_cost_limit"}:
         return "warning"
     if status in {"failed", "validation_failed", "configuration_error", "image_validation_failed", "delete_failed"}:
         return "danger"
@@ -919,6 +1516,28 @@ def _format_dt(value) -> str:
 @app.route("/health")
 def health():
     return "OK"
+
+
+@app.cli.command("cleanup-due")
+def cleanup_due_command():
+    count = 0
+    for record in find_due_cleanups():
+        account = _cloud_account_for_user(record.user_id, record.execution_provider)
+        result = cleanup_deployment_record(record.to_cleanup_record(), cloud_account=account, require_cloud_account=True)
+        payload = dict(record.result_json or {})
+        payload["cleanup_result"] = result
+        payload["status"] = result.get("status")
+        record.apply_result(payload)
+        record.cleanup_status = result.get("status")
+        count += 1
+    db.session.commit()
+    click_message = f"Processed {count} due cleanup record(s)."
+    try:
+        import click
+
+        click.echo(click_message)
+    except Exception:
+        logger.info(click_message)
 
 
 @app.route("/apps")

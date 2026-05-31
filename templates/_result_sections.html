@@ -3,8 +3,9 @@
 {% set health = result.get('health_check', {}) %}
 {% set diagnostics = result.get('diagnostics', {}) %}
 {% set cloud_account = result.get('cloud_account', {}) %}
+{% set billing = result.get('billing_safety', {}) %}
 
-<section class="summary-grid">
+<section class="summary-grid" id="deployment-summary" data-deployment-id="{{ record.id }}" data-status="{{ result.get('status') or record.status }}">
     <div class="summary-card"><span class="label">Selected Provider</span><strong>{{ decision.get('selected_provider') or 'N/A' }}</strong></div>
     <div class="summary-card"><span class="label">Deployment Mode</span><strong>{{ result.get('deployment_mode') or record.deployment_mode or 'N/A' }}</strong></div>
     <div class="summary-card"><span class="label">Status</span><span class="status {{ status_class(result.get('status') or record.status) }}">{{ result.get('status') or record.status or 'unknown' }}</span></div>
@@ -12,6 +13,48 @@
     <div class="summary-card"><span class="label">Health</span><strong>{{ health.get('result') or health.get('status') or record.health_status or 'N/A' }}</strong></div>
     <div class="summary-card"><span class="label">Cloud Account</span><strong>{{ 'connected' if cloud_account.get('connected') else 'missing' }}</strong></div>
 </section>
+
+<section class="panel">
+    <h2>Why this provider?</h2>
+    <div class="meta">
+        <div><span class="label">Selected Provider</span>{{ decision.get('selected_provider') or 'N/A' }}</div>
+        <div><span class="label">Execution Provider</span>{{ decision.get('execution_provider') or 'N/A' }}</div>
+        <div><span class="label">Connected Account</span>{{ 'connected' if cloud_account.get('connected') else 'missing' }}</div>
+    </div>
+    <p>{{ decision.get('reason') or 'No provider decision reason recorded.' }}</p>
+    {% if decision.get('evaluated_providers') %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Provider</th><th>Eligible</th><th>Cost</th><th>Uptime</th><th>Score</th><th>Reason</th></tr></thead>
+                <tbody>
+                    {% for provider in decision.get('evaluated_providers', []) %}
+                        <tr>
+                            <td>{{ provider.get('provider') }}</td>
+                            <td>{{ provider.get('eligible') }}</td>
+                            <td>${{ provider.get('estimated_cost_usd') }}</td>
+                            <td>{{ provider.get('uptime_percent') }}%</td>
+                            <td>{{ provider.get('score') }}</td>
+                            <td>{{ provider.get('exclusion_reason') or provider.get('region_support_notes') or 'Eligible after hard filters.' }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</section>
+
+{% if billing %}
+<section class="panel">
+    <h2>Billing Safety</h2>
+    <p class="notice danger-note">{{ billing.get('billing_warning') or 'Real deployments may incur cloud charges.' }}</p>
+    <div class="meta">
+        <div><span class="label">Active Real Deployments</span>{{ billing.get('active_count') }}/{{ billing.get('active_limit') }}</div>
+        <div><span class="label">Real Deployments Today</span>{{ billing.get('real_today_count') }}/{{ billing.get('real_today_limit') }}</div>
+        <div><span class="label">Platform Monthly Cost Limit</span>${{ billing.get('monthly_cost_limit_usd') }}</div>
+        <div><span class="label">Estimated Monthly Cost</span>{% if billing.get('estimated_monthly_cost_usd') is not none %}${{ billing.get('estimated_monthly_cost_usd') }}{% else %}N/A{% endif %}</div>
+    </div>
+</section>
+{% endif %}
 
 <section class="grid page-grid">
     <article class="panel">
@@ -67,8 +110,13 @@
             {% endfor %}
         </div>
     {% endif %}
-    {% if result.get('status') == 'approval_required' %}
+    {% if result.get('status') in ['approval_required', 'blocked_by_billing_ack'] %}
         <form method="post" action="{{ url_for('confirm_deployment', deployment_id=record.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="check-row">
+                <input type="checkbox" name="billing_acknowledgement" value="yes">
+                I understand this may create billable cloud resources.
+            </label>
             <button type="submit">Confirm Real Deployment</button>
         </form>
     {% endif %}
@@ -81,7 +129,7 @@
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Provider</th><th>Eligible</th><th>Cost</th><th>Uptime</th><th>Score</th><th>Pricing Type</th><th>Pricing Source</th><th>Notes</th></tr>
+                    <tr><th>Provider</th><th>Eligible</th><th>Cost</th><th>Uptime</th><th>Score</th><th>Pricing Type</th><th>Pricing Source</th><th>Connected Account</th><th>Notes</th></tr>
                 </thead>
                 <tbody>
                     {% for provider in decision.get('evaluated_providers', []) %}
@@ -93,6 +141,7 @@
                             <td>{{ provider.get('score') }}</td>
                             <td>{{ provider.get('pricing_type') }}</td>
                             <td>{{ provider.get('pricing_source') }}</td>
+                            <td>{% if provider.get('provider') == decision.get('selected_provider') %}{{ 'connected' if cloud_account.get('connected') else 'missing' }}{% else %}check Cloud Accounts{% endif %}</td>
                             <td>{{ provider.get('pricing_notes', []) | join('; ') }}</td>
                         </tr>
                     {% endfor %}
@@ -150,6 +199,19 @@
         <div><span class="label">Status Code</span>{{ health.get('status_code') or 'N/A' }}</div>
         <div><span class="label">Attempts</span>{{ health.get('attempts') or 0 }}</div>
         <div><span class="label">Message</span>{{ health.get('message') or 'N/A' }}</div>
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Deployment Timeline</h2>
+    <div class="timeline">
+        {% for event in deployment_timeline(result) %}
+            <div class="timeline-item">
+                <span class="status {{ status_class(event.status) }}">{{ event.status }}</span>
+                <strong>{{ event.label }}</strong>
+                {% if event.message %}<p>{{ event.message }}</p>{% endif %}
+            </div>
+        {% endfor %}
     </div>
 </section>
 

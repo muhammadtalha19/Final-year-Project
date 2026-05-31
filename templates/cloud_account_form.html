@@ -11,6 +11,7 @@
         </div>
     {% endif %}
     <form method="post" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Display name
             <input type="text" name="display_name" value="{{ account.display_name if account else '' }}" placeholder="{{ provider }} account">
         </label>

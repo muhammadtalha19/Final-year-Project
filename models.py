@@ -19,6 +19,7 @@ class User(UserMixin, db.Model):
     avatar_url = db.Column(db.String(500), nullable=True)
     email_verified = db.Column(db.Boolean, default=False, nullable=False)
     theme_preference = db.Column(db.String(20), default="system", nullable=False)
+    role = db.Column(db.String(20), default="user", nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_login_at = db.Column(db.DateTime, nullable=True)
 
@@ -46,6 +47,11 @@ class DeploymentRecord(db.Model):
     status = db.Column(db.String(80), index=True)
     endpoint = db.Column(db.String(500))
     health_status = db.Column(db.String(80))
+    health_checked_at = db.Column(db.DateTime, nullable=True)
+    health_message = db.Column(db.String(500), nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
     yaml_content = db.Column(db.Text, nullable=False)
     result_json = db.Column(db.JSON, nullable=False)
     health_result_json = db.Column(db.JSON, nullable=True)
@@ -73,6 +79,14 @@ class DeploymentRecord(db.Model):
         self.status = result.get("status")
         self.endpoint = endpoints[0].get("url") if endpoints else None
         self.health_status = health.get("result") or health.get("status")
+        self.health_message = health.get("message")
+        self.last_error = result.get("deployment", {}).get("message") if result.get("status") in {"failed", "cleanup_required"} else None
+        if self.status in {"running"} and not self.started_at:
+            self.started_at = datetime.utcnow()
+        if self.status in {"deployed", "failed", "cleanup_required", "deleted", "delete_failed"}:
+            self.completed_at = datetime.utcnow()
+        if health and (health.get("result") or health.get("status")) not in {None, "skipped"}:
+            self.health_checked_at = datetime.utcnow()
         self.health_result_json = health
         self.result_json = result
         cleanup = result.get("cleanup_result", {})
@@ -150,6 +164,21 @@ class CloudAccount(db.Model):
             "credentials": safe_credentials,
             "connected": True,
         }
+
+
+class AuditLog(db.Model):
+    __tablename__ = "audit_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    action = db.Column(db.String(120), nullable=False, index=True)
+    entity_type = db.Column(db.String(80), nullable=True)
+    entity_id = db.Column(db.String(120), nullable=True)
+    provider = db.Column(db.String(40), nullable=True)
+    message = db.Column(db.String(500), nullable=True)
+    metadata_json = db.Column(db.JSON, nullable=True)
+    request_id = db.Column(db.String(64), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 def auto_cleanup_delta(value: str):

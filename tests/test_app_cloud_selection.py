@@ -2,6 +2,7 @@ from io import BytesIO
 
 import app as app_module
 from models import DeploymentRecord, User
+from queue_utils import QueueResult
 
 
 YAML_WITH_MANUAL_AZURE = b"""
@@ -164,6 +165,7 @@ def test_confirm_real_deployment_route_is_post_only_and_uses_saved_yaml(monkeypa
         return _fake_result(config["selection"])
 
     monkeypatch.setattr(app_module, "deploy_app", fake_deploy)
+    monkeypatch.setattr(app_module, "enqueue_deployment", lambda deployment_id: QueueResult(True, "job-1", "queued"))
     client = _login_client()
     with app_module.app.app_context():
         user = User.query.filter_by(email="tester@example.com").first()
@@ -178,8 +180,13 @@ def test_confirm_real_deployment_route_is_post_only_and_uses_saved_yaml(monkeypa
         record_id = record.id
 
     assert client.get(f"/deployments/{record_id}/confirm").status_code == 405
-    response = client.post(f"/deployments/{record_id}/confirm")
+    response = client.post(
+        f"/deployments/{record_id}/confirm",
+        data={"billing_acknowledgement": "yes"},
+    )
 
     assert response.status_code == 200
+    assert b"queued" in response.data
     assert captured[0][0]["selection"] == {"mode": "manual", "provider": "Azure"}
     assert captured[0][1]["confirm_real_deployment"] is True
+    assert captured[0][1]["execute"] is False

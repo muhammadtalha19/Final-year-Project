@@ -12,6 +12,10 @@ class ConfigValidationError(ValueError):
         super().__init__("; ".join(errors))
 
 
+SAFE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-_]{0,63}$")
+DOCKER_IMAGE_FORBIDDEN_PATTERN = re.compile(r"[;&|`$<>\s]")
+
+
 def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Validate and normalize a deployment config.
@@ -38,6 +42,8 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     app_name = _required_string(app, "name", "app.name", errors)
     environment = _required_string(app, "environment", "app.environment", errors)
     app_type = _app_type(app.get("type"), errors)
+    if app_name and not _is_safe_name(app_name):
+        errors.append("app.name must start with a letter or number and contain only letters, numbers, hyphen, or underscore, up to 64 characters.")
 
     if deployment is None and services is None:
         errors.append("Either deployment or services must exist.")
@@ -375,10 +381,15 @@ def _normalize_services(
             port = _port(service.get("port"), f"services[{index - 1}].port", errors)
             replicas = _replicas(service.get("replicas"), f"services[{index - 1}].replicas", errors)
             public = _optional_bool(service.get("public"), f"services[{index - 1}].public", errors)
+            name = str(service.get("name") or f"service-{index}").strip()
+            if not _is_safe_name(name):
+                errors.append(f"services[{index - 1}].name must start with a letter or number and contain only letters, numbers, hyphen, or underscore, up to 64 characters.")
+            if image and not _is_safe_image(image):
+                errors.append(f"services[{index - 1}].image contains unsafe characters.")
 
             normalized.append(
                 {
-                    "name": str(service.get("name") or f"service-{index}").strip(),
+                    "name": name,
                     "image": image,
                     "port": port,
                     "replicas": replicas,
@@ -408,7 +419,17 @@ def _normalize_services(
         errors.append("deployment.image is required.")
     else:
         service["image"] = image_value.strip()
+        if not _is_safe_image(service["image"]):
+            errors.append("deployment.image contains unsafe characters.")
 
     service["port"] = _port(service["port"], "deployment.port", errors)
     service["replicas"] = _replicas(service["replicas"], "deployment.replicas", errors)
     return [service]
+
+
+def _is_safe_name(value: str) -> bool:
+    return bool(SAFE_NAME_PATTERN.fullmatch(value or ""))
+
+
+def _is_safe_image(value: str) -> bool:
+    return bool(value) and not DOCKER_IMAGE_FORBIDDEN_PATTERN.search(value)
