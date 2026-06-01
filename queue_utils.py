@@ -24,5 +24,9 @@ def enqueue_deployment(deployment_id: str) -> QueueResult:
         redis_conn = Redis.from_url(current_app.config["REDIS_URL"])
         job = Queue("deployments", connection=redis_conn).enqueue(run_deployment_job, deployment_id)
         return QueueResult(True, job.id, "Deployment queued for background worker.")
-    except Exception as exc:
-        return QueueResult(False, "", f"Deployment queue unavailable: {exc}")
+    except Exception:
+        return QueueResult(
+            False,
+            "",
+            "Background queue is not available. Start Redis/worker or use dry-run.",
+        )

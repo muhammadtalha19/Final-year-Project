@@ -4,6 +4,7 @@
 <section class="panel">
     <span class="label">Deployment Detail</span>
     <h1>{{ record.app_name or 'Deployment' }}</h1>
+    <p class="empty">Review provider reasoning, commands, timeline, health, diagnostics, YAML, and cleanup options.</p>
     <div class="action-list">
         <a class="button secondary" href="{{ url_for('deployment_report', deployment_id=record.id) }}">Report</a>
         <form class="inline-form" method="post" action="{{ url_for('refresh_deployment', deployment_id=record.id) }}">

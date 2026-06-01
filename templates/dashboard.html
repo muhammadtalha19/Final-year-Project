@@ -4,6 +4,7 @@
 <section class="panel">
     <span class="label">Dashboard</span>
     <h1>Welcome, {{ current_user.name }}</h1>
+    <p class="empty">Review your deployment activity, provider readiness, and recent orchestration results.</p>
     <div class="action-list">
         <a class="button" href="{{ url_for('deploy_new') }}">New Deployment</a>
         <a class="button secondary" href="{{ url_for('deployments') }}">View History</a>

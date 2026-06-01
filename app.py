@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+from copy import deepcopy
 from functools import wraps
 from uuid import uuid4
 from datetime import datetime
@@ -7,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, Response, abort, flash, g, has_request_context, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests
 import yaml
@@ -83,6 +85,8 @@ limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("RATELIMIT_
 limiter.init_app(app)
 
 MAX_YAML_BYTES = 65536
+READINESS_CACHE_TTL_SECONDS = 30
+_READINESS_CACHE: Dict[tuple, Dict[str, Any]] = {}
 
 config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 try:
@@ -344,6 +348,16 @@ def attach_request_id():
 def add_request_id(response):
     response.headers["X-Request-ID"] = getattr(g, "request_id", uuid4().hex)
     return response
+
+
+@app.errorhandler(OperationalError)
+@app.errorhandler(ProgrammingError)
+def handle_database_schema_error(error):
+    logger.exception("Database schema appears outdated. Run migrations or recreate local dev database.")
+    return (
+        "Database schema appears outdated. Run migrations or recreate local dev database.",
+        500,
+    )
 
 
 def admin_required(func):
@@ -926,6 +940,7 @@ def connect_cloud_account(provider):
             account.set_credentials(credentials)
             db.session.add(account)
             db.session.commit()
+            _clear_readiness_cache(current_user.id)
             record_audit_event(
                 "cloud_account_connected",
                 entity_type="cloud_account",
@@ -972,6 +987,7 @@ def delete_cloud_account(account_id):
     provider_name = account.provider
     db.session.delete(account)
     db.session.commit()
+    _clear_readiness_cache(current_user.id)
     record_audit_event(
         "cloud_account_deleted",
         entity_type="cloud_account",
@@ -1190,20 +1206,52 @@ def _provider_readiness_summary(include_bootstrap: bool = False):
     config = _readiness_probe_config()
     summary = []
     accounts = _cloud_account_map(current_user.id) if current_user.is_authenticated else {}
+    bypass_cache = request.args.get("refresh") == "1" if has_request_context() else False
     for provider in ["AWS", "Azure", "GCP"]:
-        readiness = check_provider_readiness(
-            provider,
-            config,
-            cloud_account=accounts.get(provider),
-            require_cloud_account=True,
-        )
+        readiness = _cached_provider_readiness(provider, config, accounts.get(provider), bypass_cache=bypass_cache)
         item = {"provider": provider, "readiness": readiness}
-        if accounts.get(provider):
+        if include_bootstrap and accounts.get(provider):
             item["account"] = accounts[provider].masked_summary()
         if include_bootstrap or not readiness.get("ready"):
             item["bootstrap_plan"] = generate_provider_bootstrap_plan(provider)
         summary.append(item)
     return summary
+
+
+def _cached_provider_readiness(provider: str, config: Dict[str, Any], account=None, bypass_cache: bool = False) -> Dict[str, Any]:
+    key = _readiness_cache_key(current_user.id if current_user.is_authenticated else 0, provider, account)
+    now = time.monotonic()
+    cached = _READINESS_CACHE.get(key)
+    if not bypass_cache and cached and now - cached["cached_at"] <= READINESS_CACHE_TTL_SECONDS:
+        return deepcopy(cached["readiness"])
+
+    readiness = check_provider_readiness(
+        provider,
+        config,
+        cloud_account=account,
+        require_cloud_account=True,
+    )
+    _READINESS_CACHE[key] = {
+        "cached_at": now,
+        "readiness": deepcopy(readiness),
+    }
+    return readiness
+
+
+def _readiness_cache_key(user_id: int, provider: str, account=None) -> tuple:
+    if not account:
+        return (user_id, provider, "not-connected")
+    updated = account.updated_at.isoformat() if getattr(account, "updated_at", None) else ""
+    return (user_id, provider, getattr(account, "id", None), getattr(account, "status", ""), updated)
+
+
+def _clear_readiness_cache(user_id: Optional[int] = None) -> None:
+    if user_id is None:
+        _READINESS_CACHE.clear()
+        return
+    for key in list(_READINESS_CACHE):
+        if key and key[0] == user_id:
+            _READINESS_CACHE.pop(key, None)
 
 
 def _readiness_probe_config() -> Dict[str, Any]:

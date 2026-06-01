@@ -34,4 +34,11 @@
     {% endif %}
     <p>Real deployments remain controlled by safety flags, connected user-owned cloud accounts, provider readiness, billing acknowledgement, and confirmation.</p>
 </section>
+
+<section class="panel">
+    <h2>Public Demo Mode</h2>
+    <p>Current public demo mode can run dry-runs safely without creating cloud resources.</p>
+    <p>Real deployments require a connected user cloud account, enabled safety flags, billing acknowledgement, approval, and the background queue when queue mode is enabled.</p>
+    <p>GCP real connection may be blocked when service-account key creation is disabled by organization policy. AWS and Azure are recommended for controlled real demos.</p>
+</section>
 {% endblock %}

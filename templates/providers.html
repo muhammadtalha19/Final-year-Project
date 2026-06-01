@@ -5,7 +5,10 @@
     <span class="label">Model B</span>
     <h1>Your provider readiness</h1>
     <p>Deployments run in your connected cloud account. Saved credentials are encrypted and secrets are never shown here.</p>
-    <p><a href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a></p>
+    <div class="action-list">
+        <a class="button secondary" href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a>
+        <a class="button secondary" href="{{ url_for('providers', refresh=1) }}">Refresh Readiness</a>
+    </div>
     <h2>Safety Flags</h2>
     <div class="summary-grid">
         {% for name, value in safety_flags.items() %}
