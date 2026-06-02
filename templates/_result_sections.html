@@ -4,21 +4,44 @@
 {% set diagnostics = result.get('diagnostics', {}) %}
 {% set cloud_account = result.get('cloud_account', {}) %}
 {% set billing = result.get('billing_safety', {}) %}
+{% set final_provider = decision.get('selected_provider') or record.selected_provider or decision.get('execution_provider') or record.execution_provider or deployment.get('provider') %}
+{% set execution_provider = decision.get('execution_provider') or record.execution_provider or deployment.get('provider') or final_provider %}
+{% set requested_provider = decision.get('manual_provider') if decision.get('selection_mode') == 'manual' else 'auto' %}
+{% set current_status = result.get('status') or record.status %}
 
 <section class="summary-grid" id="deployment-summary" data-deployment-id="{{ record.id }}" data-status="{{ result.get('status') or record.status }}">
-    <div class="summary-card"><span class="label">Selected Provider</span><strong>{{ decision.get('selected_provider') or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Selected Provider</span><strong>{{ final_provider or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Requested</span><strong>{{ requested_provider or 'N/A' }}</strong></div>
+    <div class="summary-card"><span class="label">Execution Provider</span><strong>{{ execution_provider or 'N/A' }}</strong></div>
     <div class="summary-card"><span class="label">Deployment Mode</span><strong>{{ result.get('deployment_mode') or record.deployment_mode or 'N/A' }}</strong></div>
-    <div class="summary-card"><span class="label">Status</span><span class="status {{ status_class(result.get('status') or record.status) }}">{{ result.get('status') or record.status or 'unknown' }}</span></div>
+    <div class="summary-card"><span class="label">Status</span><span class="status {{ status_class(current_status) }}">{{ status_label(current_status) }}</span></div>
     <div class="summary-card"><span class="label">Public URL</span>{% if record.endpoint %}<a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a>{% else %}N/A{% endif %}</div>
     <div class="summary-card"><span class="label">Health</span><strong>{{ health.get('result') or health.get('status') or record.health_status or 'N/A' }}</strong></div>
     <div class="summary-card"><span class="label">Cloud Account</span><strong>{{ 'connected' if cloud_account.get('connected') else 'missing' }}</strong></div>
+    {% if current_status == 'queued' and (record.rq_job_id or result.get('job_id')) %}
+        <div class="summary-card"><span class="label">RQ Job ID</span><strong>{{ record.rq_job_id or result.get('job_id') }}</strong></div>
+    {% endif %}
 </section>
+
+{% if current_status in ['queue_lost', 'stale_queued', 'stale_running', 'queue_unavailable'] %}
+<section class="panel">
+    <h2>Queue Attention Required</h2>
+    <p class="notice danger-note">
+        {% if current_status == 'queue_unavailable' %}
+            The deployment was not queued. Redis/enqueue failed. Start Redis and submit again.
+        {% else %}
+            This deployment was queued but no worker job exists. Start worker and click Requeue.
+        {% endif %}
+    </p>
+</section>
+{% endif %}
 
 <section class="panel">
     <h2>Why this provider?</h2>
     <div class="meta">
-        <div><span class="label">Selected Provider</span>{{ decision.get('selected_provider') or 'N/A' }}</div>
-        <div><span class="label">Execution Provider</span>{{ decision.get('execution_provider') or 'N/A' }}</div>
+        <div><span class="label">Requested Provider/Mode</span>{{ requested_provider or 'N/A' }}</div>
+        <div><span class="label">Final Provider</span>{{ final_provider or 'N/A' }}</div>
+        <div><span class="label">Execution Provider</span>{{ execution_provider or 'N/A' }}</div>
         <div><span class="label">Connected Account</span>{{ 'connected' if cloud_account.get('connected') else 'missing' }}</div>
     </div>
     <p>{{ decision.get('reason') or 'No provider decision reason recorded.' }}</p>
@@ -61,9 +84,10 @@
         <h2>Selection</h2>
         <div class="meta">
             <div><span class="label">Selection Mode</span>{{ decision.get('selection_mode') or 'N/A' }}</div>
-            <div><span class="label">Manual Provider</span>{{ decision.get('manual_provider') or 'N/A' }}</div>
+            <div><span class="label">Requested Provider</span>{{ requested_provider or 'N/A' }}</div>
             <div><span class="label">Recommended Provider</span>{{ decision.get('recommended_provider') or 'N/A' }}</div>
-            <div><span class="label">Execution Provider</span>{{ decision.get('execution_provider') or 'N/A' }}</div>
+            <div><span class="label">Final Provider</span>{{ final_provider or 'N/A' }}</div>
+            <div><span class="label">Execution Provider</span>{{ execution_provider or 'N/A' }}</div>
         </div>
         <p>{{ decision.get('reason') or deployment.get('message') or 'No decision reason available.' }}</p>
     </article>
@@ -123,6 +147,23 @@
 </section>
 {% endif %}
 
+{% if record.status in ['queued', 'stale_queued', 'queue_lost', 'failed'] %}
+<section class="panel">
+    <h2>Requeue</h2>
+    <p class="notice">Start Redis/Valkey and the worker before requeueing real deployments.</p>
+    <form method="post" action="{{ url_for('requeue_deployment', deployment_id=record.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if not result.get('billing_acknowledged') %}
+            <label class="check-row">
+                <input type="checkbox" name="billing_acknowledgement" value="yes">
+                I understand this may create billable cloud resources.
+            </label>
+        {% endif %}
+        <button type="submit">Requeue Deployment</button>
+    </form>
+</section>
+{% endif %}
+
 <section class="panel">
     <h2>Provider Evaluation</h2>
     {% if decision.get('evaluated_providers') %}
@@ -156,8 +197,10 @@
 <section class="panel">
     <h2>Deployment Status</h2>
     <div class="meta">
-        <div><span class="label">Provider</span>{{ deployment.get('provider') or decision.get('execution_provider') or 'N/A' }}</div>
-        <div><span class="label">Status</span>{{ deployment.get('status') or result.get('status') or 'N/A' }}</div>
+        <div><span class="label">Selected Provider</span>{{ final_provider or 'N/A' }}</div>
+        <div><span class="label">Execution Provider</span>{{ execution_provider or 'N/A' }}</div>
+        <div><span class="label">Status</span>{{ status_label(deployment.get('status') or result.get('status')) }}</div>
+        <div><span class="label">RQ Job ID</span>{{ record.rq_job_id or result.get('job_id') or 'N/A' }}</div>
         <div><span class="label">Message</span>{{ deployment.get('message') or 'N/A' }}</div>
         <div><span class="label">Cleanup</span>{{ record.cleanup_status or result.get('cleanup_result', {}).get('status') or 'N/A' }}</div>
         <div><span class="label">Cloud Account</span>{{ cloud_account.get('display_name') or cloud_account.get('message') or 'N/A' }}</div>

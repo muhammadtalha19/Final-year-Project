@@ -96,7 +96,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-The development SQLite database is created automatically under `instance/orchestrator.db` on app startup. You can also point `DATABASE_URL` at another SQLite file for local experiments.
+The development SQLite database lives under `instance/orchestrator.db` by default. Create or update it with `flask db upgrade` before running the portal. You can also point `DATABASE_URL` at another SQLite file for local experiments.
 
 Set `CREDENTIAL_ENCRYPTION_KEY` before saving user cloud accounts. Do not commit `.env`, OAuth client secrets, cloud credentials, `.pem`, logs, caches, database files, or virtual environments.
 
@@ -106,13 +106,47 @@ Generate an encryption key:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Database migrations use Flask-Migrate:
+Database migrations use Flask-Migrate. For normal schema changes, migrate the database instead of deleting it:
 
 ```bash
-flask db init
-flask db migrate -m "initial migration"
+python manage_db.py backup
 flask db upgrade
 ```
+
+The helper script also supports:
+
+```bash
+python manage_db.py status
+python manage_db.py upgrade
+```
+
+`python manage_db.py upgrade` creates a local backup first, then runs the Flask-Migrate upgrade path.
+
+## How to Preserve Users and Cloud Credentials
+
+The SQLite database stores registered users, connected cloud accounts, encrypted cloud credentials, deployment records, reports, and audit logs. Do not delete the database for normal model/schema updates.
+
+Before major code changes or migrations, back up the local database and `.env`:
+
+```bash
+python manage_db.py backup
+```
+
+After pulling or making schema changes, run:
+
+```bash
+flask db upgrade
+```
+
+or:
+
+```bash
+python manage_db.py upgrade
+```
+
+Keep the same `CREDENTIAL_ENCRYPTION_KEY` in `.env`. Changing or losing this key makes previously saved cloud credentials unreadable, because AWS/Azure/GCP credential payloads are encrypted with that key. If the key is exposed, rotate the key and reconnect cloud accounts before saving real credentials again.
+
+If the app shows `Database schema is outdated. Run: flask db upgrade`, run the migration command above. Backups are written to `_local_backups/YYYYMMDD_HHMMSS/`, which is ignored by Git.
 
 For production, set `DATABASE_URL` to PostgreSQL. `postgres://` URLs are normalized to `postgresql://`.
 

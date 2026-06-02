@@ -41,4 +41,17 @@
     <p>Real deployments require a connected user cloud account, enabled safety flags, billing acknowledgement, approval, and the background queue when queue mode is enabled.</p>
     <p>GCP real connection may be blocked when service-account key creation is disabled by organization policy. AWS and Azure are recommended for controlled real demos.</p>
 </section>
+
+{% if queue_status %}
+<section class="panel">
+    <h2>Background Queue</h2>
+    <div class="summary-grid">
+        <div class="summary-card"><span class="label">Queue Name</span><strong>{{ queue_status.queue_name }}</strong></div>
+        <div class="summary-card"><span class="label">Redis Reachable</span><strong>{{ queue_status.redis_reachable }}</strong></div>
+        <div class="summary-card"><span class="label">Queued Jobs</span><strong>{{ queue_status.queued_job_count }}</strong></div>
+        <div class="summary-card"><span class="label">Failed Jobs</span><strong>{{ queue_status.failed_job_count }}</strong></div>
+    </div>
+    <p class="empty">{{ queue_status.message }} Keep the worker running for real deployments.</p>
+</section>
+{% endif %}
 {% endblock %}

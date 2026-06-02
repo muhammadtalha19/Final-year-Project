@@ -2,11 +2,15 @@
 *.env
 *.db
 instance/*.db
+_local_backups/
+fyp_safe_backup/
 deployments.json
 *.pem
 *.key
 *.crt
 *.log
+*credentials*.json
+*service-account*.json
 __pycache__/
 .pytest_cache/
 *.pyc

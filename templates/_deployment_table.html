@@ -23,7 +23,12 @@
                     <td>{{ record.app_type or 'api' }}</td>
                     <td>{{ record.execution_provider or record.selected_provider or 'N/A' }}</td>
                     <td>{{ record.deployment_mode or 'N/A' }}</td>
-                    <td><span class="status {{ status_class(record.status) }}">{{ record.status or 'unknown' }}</span></td>
+                    <td>
+                        <span class="status {{ status_class(record.status) }}">{{ status_label(record.status) }}</span>
+                        {% if record.status in ['queue_lost', 'stale_queued'] %}
+                            <br><small>Worker job missing. Requeue after starting worker.</small>
+                        {% endif %}
+                    </td>
                     <td>{% if record.endpoint %}<a href="{{ record.endpoint }}" target="_blank" rel="noopener">{{ record.endpoint }}</a>{% else %}N/A{% endif %}</td>
                     <td>
                         {% if record.auto_cleanup_at %}{{ format_dt(record.auto_cleanup_at) }}{% else %}none{% endif %}
@@ -37,6 +42,12 @@
                                 <form class="inline-form" method="post" action="{{ url_for('delete_saved_deployment', deployment_id=record.id) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="delete-button">Delete</button>
+                                </form>
+                            {% endif %}
+                            {% if record.status in ['queued', 'stale_queued', 'queue_lost', 'failed'] %}
+                                <form class="inline-form" method="post" action="{{ url_for('requeue_deployment', deployment_id=record.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="button secondary">Requeue</button>
                                 </form>
                             {% endif %}
                         </div>

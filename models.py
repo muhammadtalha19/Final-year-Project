@@ -45,6 +45,8 @@ class DeploymentRecord(db.Model):
     selection_mode = db.Column(db.String(50))
     deployment_mode = db.Column(db.String(50))
     status = db.Column(db.String(80), index=True)
+    rq_job_id = db.Column(db.String(120), nullable=True, index=True)
+    queued_at = db.Column(db.DateTime, nullable=True)
     endpoint = db.Column(db.String(500))
     health_status = db.Column(db.String(80))
     health_checked_at = db.Column(db.DateTime, nullable=True)
@@ -77,13 +79,17 @@ class DeploymentRecord(db.Model):
         self.selection_mode = decision.get("selection_mode")
         self.deployment_mode = result.get("deployment_mode")
         self.status = result.get("status")
+        if result.get("job_id"):
+            self.rq_job_id = result.get("job_id")
         self.endpoint = endpoints[0].get("url") if endpoints else None
         self.health_status = health.get("result") or health.get("status")
         self.health_message = health.get("message")
-        self.last_error = result.get("deployment", {}).get("message") if result.get("status") in {"failed", "cleanup_required"} else None
+        self.last_error = result.get("deployment", {}).get("message") if result.get("status") in {"failed", "cleanup_required", "queue_lost", "stale_queued", "stale_running", "queue_unavailable"} else None
+        if self.status == "queued" and not self.queued_at:
+            self.queued_at = datetime.utcnow()
         if self.status in {"running"} and not self.started_at:
             self.started_at = datetime.utcnow()
-        if self.status in {"deployed", "failed", "cleanup_required", "deleted", "delete_failed"}:
+        if self.status in {"deployed", "failed", "cleanup_required", "deleted", "delete_failed", "queue_lost", "stale_queued", "stale_running", "queue_unavailable"}:
             self.completed_at = datetime.utcnow()
         if health and (health.get("result") or health.get("status")) not in {None, "skipped"}:
             self.health_checked_at = datetime.utcnow()

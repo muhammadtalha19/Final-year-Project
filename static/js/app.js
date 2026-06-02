@@ -98,7 +98,7 @@
                     summary.dataset.status = payload.status || "";
                     const statusNode = summary.querySelector(".status");
                     if (statusNode && payload.status) {
-                        statusNode.textContent = payload.status;
+                        statusNode.textContent = payload.status_label || payload.status;
                     }
                     if (!["queued", "running"].includes(payload.status || "")) {
                         window.location.reload();

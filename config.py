@@ -34,6 +34,7 @@ class BaseConfig:
     WTF_CSRF_ENABLED = _env_bool("WTF_CSRF_ENABLED", "true")
     RATELIMIT_ENABLED = _env_bool("RATELIMIT_ENABLED", "true")
     BACKGROUND_JOBS_ENABLED = _env_bool("BACKGROUND_JOBS_ENABLED")
+    AUTO_CREATE_DB = _env_bool("AUTO_CREATE_DB")
 
     @classmethod
     def init_app(cls, app):
@@ -53,6 +54,7 @@ class TestingConfig(BaseConfig):
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
     BACKGROUND_JOBS_ENABLED = False
+    AUTO_CREATE_DB = True
 
 
 class ProductionConfig(BaseConfig):

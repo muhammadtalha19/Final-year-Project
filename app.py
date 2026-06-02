@@ -4,7 +4,7 @@ import time
 from copy import deepcopy
 from functools import wraps
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from flask import Flask, Response, abort, flash, g, has_request_context, jsonify, redirect, render_template, request, url_for
@@ -28,7 +28,7 @@ from models import AuditLog, CloudAccount, DeploymentRecord, User, auto_cleanup_
 from orchestrator import cleanup_deployment_record, deploy_app
 from provider_bootstrap import generate_provider_bootstrap_plan
 from provider_readiness import check_provider_readiness
-from queue_utils import enqueue_deployment
+from queue_utils import QUEUE_NAME, check_queue_available, enqueue_deployment, get_queue_diagnostics
 
 try:
     from flask_wtf.csrf import CSRFProtect, generate_csrf
@@ -333,6 +333,7 @@ def inject_portal_context():
         "oauth_providers": oauth_status(),
         "safety_flags": _safety_flags(),
         "status_class": _status_class,
+        "status_label": _status_label,
         "format_dt": _format_dt,
         "csrf_token": generate_csrf,
         "deployment_timeline": build_deployment_timeline,
@@ -353,11 +354,11 @@ def add_request_id(response):
 @app.errorhandler(OperationalError)
 @app.errorhandler(ProgrammingError)
 def handle_database_schema_error(error):
-    logger.exception("Database schema appears outdated. Run migrations or recreate local dev database.")
-    return (
-        "Database schema appears outdated. Run migrations or recreate local dev database.",
-        500,
-    )
+    guidance = "Database schema is outdated. Run: flask db upgrade"
+    logger.exception("%s Original error: %s", guidance, error)
+    if app.config.get("DEBUG"):
+        return (f"{guidance}\nOriginal error: {error}", 500)
+    return (guidance, 500)
 
 
 def admin_required(func):
@@ -641,7 +642,11 @@ def deploy_legacy_post():
 @app.route("/deployments", methods=["GET"])
 @login_required
 def deployments():
-    return render_template("deployments.html", deployments=_user_deployments_query().all())
+    records = _user_deployments_query().all()
+    for record in records:
+        if record.status in {"queued", "running"}:
+            sync_deployment_status_from_rq(record)
+    return render_template("deployments.html", deployments=records)
 
 
 @app.route("/history", methods=["GET"])
@@ -654,6 +659,7 @@ def history():
 @login_required
 def deployment_detail(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
+    sync_deployment_status_from_rq(record)
     return render_template("deployment_detail.html", record=record, result=record.result_json or {})
 
 
@@ -661,6 +667,10 @@ def deployment_detail(deployment_id):
 @login_required
 def confirm_deployment(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
+    existing = _confirm_idempotency_result(record)
+    if existing:
+        return existing
+
     config = yaml.safe_load(record.yaml_content)
     preflight = deploy_app(
         config,
@@ -701,22 +711,115 @@ def confirm_deployment(deployment_id):
         )
         return render_template("deploy_result.html", record=record, result=safety_block)
 
+    queue_block = _queue_preflight_block(preflight)
+    if queue_block:
+        record.apply_result(queue_block, yaml_content=record.yaml_content)
+        db.session.commit()
+        record_audit_event(
+            "deployment_queue_unavailable",
+            entity_type="deployment",
+            entity_id=record.id,
+            provider=record.execution_provider,
+            message=queue_block.get("deployment", {}).get("message", "Background queue unavailable."),
+            metadata={"status": record.status},
+        )
+        return render_template("deploy_result.html", record=record, result=queue_block)
+
     queue_result = enqueue_deployment(record.id)
     result = dict(record.result_json or {})
-    result["status"] = "queued" if queue_result.queued else "failed"
+    result["status"] = "queued" if queue_result.queued else "queue_unavailable"
     result["deployment_mode"] = "real"
     result.setdefault("deployment", {})["status"] = result["status"]
     result["deployment"]["message"] = queue_result.message
     result["job_id"] = queue_result.job_id
+    result["billing_acknowledged"] = True
     result["billing_safety"] = _billing_safety_summary(current_user.id, preflight)
     record.apply_result(result, yaml_content=record.yaml_content)
+    record.rq_job_id = queue_result.job_id or None
+    record.queued_at = datetime.utcnow() if queue_result.queued else None
+    record.last_error = None if queue_result.queued else queue_result.message
     db.session.commit()
+    if queue_result.queued:
+        flash("Deployment queued successfully. Keep worker.py running to process it.")
     record_audit_event(
         "deployment_real_requested",
         entity_type="deployment",
         entity_id=record.id,
         provider=record.execution_provider,
         message="Real deployment queued for background execution.",
+        metadata={"status": record.status, "job_id": queue_result.job_id},
+    )
+    return render_template("deploy_result.html", record=record, result=result)
+
+
+@app.route("/deployments/<deployment_id>/requeue", methods=["POST"])
+@login_required
+def requeue_deployment(deployment_id):
+    record = _owned_deployment_or_404(deployment_id)
+    if record.status not in {"queued", "stale_queued", "queue_lost", "failed"}:
+        flash("This deployment status cannot be requeued.")
+        return redirect(url_for("deployment_detail", deployment_id=record.id))
+
+    result = dict(record.result_json or {})
+    if not result.get("billing_acknowledged") and request.form.get("billing_acknowledgement") != "yes":
+        result = _blocked_deployment_result(
+            result,
+            "blocked_by_billing_ack",
+            "Requeue requires billing acknowledgement before resources can be queued.",
+            current_user.id,
+        )
+        record.apply_result(result, yaml_content=record.yaml_content)
+        db.session.commit()
+        return render_template("deploy_result.html", record=record, result=result)
+
+    config = yaml.safe_load(record.yaml_content)
+    preflight = deploy_app(
+        config,
+        execute=False,
+        confirm_real_deployment=True,
+        cloud_accounts=_cloud_account_map(current_user.id),
+        require_cloud_account=True,
+    )
+    if preflight.get("status") in {"cloud_account_required", "provider_not_ready", "image_validation_failed", "blocked_by_safety_flag"}:
+        record.apply_result(preflight, yaml_content=record.yaml_content)
+        db.session.commit()
+        return render_template("deploy_result.html", record=record, result=preflight)
+
+    safety_block = _real_deployment_safety_block(current_user.id, preflight, billing_acknowledged=True)
+    if safety_block:
+        record.apply_result(safety_block, yaml_content=record.yaml_content)
+        db.session.commit()
+        return render_template("deploy_result.html", record=record, result=safety_block)
+
+    queue_block = _queue_preflight_block(preflight)
+    if queue_block:
+        record.apply_result(queue_block, yaml_content=record.yaml_content)
+        db.session.commit()
+        return render_template("deploy_result.html", record=record, result=queue_block)
+
+    queue_result = enqueue_deployment(record.id)
+    result = dict(record.result_json or {})
+    result["status"] = "queued" if queue_result.queued else "queue_unavailable"
+    result["deployment_mode"] = "real"
+    result.setdefault("deployment", {})["status"] = result["status"]
+    result["deployment"]["message"] = queue_result.message
+    result["job_id"] = queue_result.job_id
+    result["billing_acknowledged"] = True
+    record.apply_result(result, yaml_content=record.yaml_content)
+    record.rq_job_id = queue_result.job_id or None
+    record.queued_at = datetime.utcnow() if queue_result.queued else None
+    record.started_at = None
+    record.completed_at = None
+    record.last_error = None if queue_result.queued else queue_result.message
+    db.session.commit()
+    if queue_result.queued:
+        flash("Deployment queued successfully. Keep worker.py running to process it.")
+    record_audit_event(
+        "deployment_requeued",
+        entity_type="deployment",
+        entity_id=record.id,
+        provider=record.execution_provider,
+        message="Deployment was requeued for background execution.",
         metadata={"status": record.status, "job_id": queue_result.job_id},
     )
     return render_template("deploy_result.html", record=record, result=result)
@@ -771,12 +874,15 @@ def refresh_deployment(deployment_id):
 @login_required
 def deployment_status(deployment_id):
     record = _owned_deployment_or_404(deployment_id)
+    snapshot = _read_only_deployment_status(record)
     return jsonify(
         {
-            "status": record.status,
+            "status": snapshot["status"],
+            "status_label": _status_label(snapshot["status"]),
             "health_status": record.health_status,
             "public_url": record.endpoint,
-            "message": (record.result_json or {}).get("deployment", {}).get("message"),
+            "message": snapshot["message"],
+            "queue_diagnostics": snapshot["queue_diagnostics"],
             "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         }
     )
@@ -806,7 +912,7 @@ def deployment_report(deployment_id):
 @login_required
 def providers():
     readiness = _provider_readiness_summary(include_bootstrap=True)
-    return render_template("providers.html", readiness=readiness, safety_flags=_safety_flags())
+    return render_template("providers.html", readiness=readiness, safety_flags=_safety_flags(), queue_status=get_queue_diagnostics())
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -896,6 +1002,7 @@ def production_readiness():
         implemented=implemented,
         future_work=future_work,
         phase13_skipped=True,
+        queue_status=get_queue_diagnostics(),
     )
 
 
@@ -1295,6 +1402,163 @@ def _deployment_quota_snapshot(user_id: int) -> Dict[str, Any]:
     }
 
 
+def _queue_preflight_block(preflight: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if preflight.get("deployment_mode") != "real":
+        return None
+    if app.config.get("TESTING"):
+        return None
+    availability = check_queue_available()
+    if availability.available:
+        return None
+    return _blocked_deployment_result(
+        preflight,
+        "queue_unavailable",
+        availability.message,
+        current_user.id,
+    )
+
+
+def _confirm_idempotency_result(record: DeploymentRecord):
+    if record.status in {"queued", "running"} and record.rq_job_id:
+        flash("Deployment is already queued or running. No duplicate job was created.")
+        return render_template("deploy_result.html", record=record, result=record.result_json or {})
+    if record.status in {"blocked_by_safety_flag", "deployed", "deleted"}:
+        flash(f"Deployment is {record.status}. No new job was created.")
+        return render_template("deploy_result.html", record=record, result=record.result_json or {})
+    return None
+
+
+def _read_only_deployment_status(record: DeploymentRecord) -> Dict[str, Any]:
+    result = record.result_json or {}
+    deployment = result.get("deployment", {})
+    snapshot = {
+        "status": record.status,
+        "message": deployment.get("message"),
+        "queue_diagnostics": result.get("queue_diagnostics", {}),
+    }
+    if record.deployment_mode != "real" or record.status not in {"queued", "running"}:
+        return snapshot
+    if record.rq_job_id and record.rq_job_id.startswith("test-") and app.config.get("TESTING"):
+        return snapshot
+
+    diagnostics = get_queue_diagnostics(record.id, job_id=record.rq_job_id)
+    snapshot["queue_diagnostics"] = _safe_queue_diagnostics(diagnostics)
+    job_status = diagnostics.get("job_status", "")
+    if diagnostics.get("job_found"):
+        if job_status in {"queued", "deferred", "scheduled"}:
+            snapshot["status"] = "queued"
+            snapshot["message"] = "Deployment is waiting for a worker."
+        elif job_status == "started":
+            snapshot["status"] = "running"
+            snapshot["message"] = "Background deployment job is running."
+        elif job_status == "finished":
+            snapshot["status"] = _finished_status_from_result(record)
+            snapshot["message"] = "Background job finished."
+        elif job_status == "failed":
+            snapshot["status"] = "failed"
+            snapshot["message"] = "Background deployment job failed. Check worker logs for details."
+        return snapshot
+
+    if record.status == "queued":
+        snapshot["status"] = "queue_lost"
+        snapshot["message"] = "Queued job was not found in Redis. Requeue or submit again."
+    elif record.status == "running" and _record_queue_age(record) > timedelta(minutes=5):
+        snapshot["status"] = "stale_running"
+        snapshot["message"] = "Running job is stale or missing from Redis. Requeue or submit again."
+    return snapshot
+
+
+def sync_deployment_status_from_rq(record: DeploymentRecord) -> DeploymentRecord:
+    if record.deployment_mode != "real" or record.status not in {"queued", "running"}:
+        return record
+    if record.rq_job_id and record.rq_job_id.startswith("test-") and app.config.get("TESTING"):
+        return record
+
+    diagnostics = get_queue_diagnostics(record.id, job_id=record.rq_job_id)
+    status = diagnostics.get("job_status", "")
+    if diagnostics.get("job_found"):
+        if status in {"queued", "deferred", "scheduled"}:
+            _update_record_queue_status(record, "queued", diagnostics, "Deployment is waiting for a worker.")
+        elif status == "started":
+            _update_record_queue_status(record, "running", diagnostics, "Background deployment job is running.")
+            if not record.started_at:
+                record.started_at = datetime.utcnow()
+        elif status == "finished":
+            result_status = _finished_status_from_result(record)
+            _update_record_queue_status(record, result_status, diagnostics, "Background job finished.")
+            if not record.completed_at:
+                record.completed_at = datetime.utcnow()
+        elif status == "failed":
+            _update_record_queue_status(record, "failed", diagnostics, "Background deployment job failed. Check worker logs for details.")
+            record.last_error = "Background deployment job failed. Check worker logs for details."
+            if not record.completed_at:
+                record.completed_at = datetime.utcnow()
+    else:
+        if record.status == "queued":
+            _update_record_queue_status(
+                record,
+                "queue_lost",
+                diagnostics,
+                "Queued job was not found in Redis. Requeue or submit again.",
+            )
+            record.last_error = "Queued job was not found in Redis. Requeue or submit again."
+            record.completed_at = datetime.utcnow()
+        elif record.status == "running" and _record_queue_age(record) > timedelta(minutes=5):
+            _update_record_queue_status(
+                record,
+                "stale_running",
+                diagnostics,
+                "Running job is stale or missing from Redis. Requeue or submit again.",
+            )
+            record.last_error = "Running job is stale or missing from Redis. Requeue or submit again."
+            record.completed_at = datetime.utcnow()
+    db.session.commit()
+    return record
+
+
+def _update_record_queue_status(record: DeploymentRecord, status: str, diagnostics: Dict[str, Any], message: str) -> None:
+    record.status = status
+    result = dict(record.result_json or {})
+    result["status"] = status
+    result["queue_diagnostics"] = _safe_queue_diagnostics(diagnostics)
+    result.setdefault("deployment", {})["status"] = status
+    result["deployment"]["message"] = message
+    record.result_json = result
+
+
+def _safe_queue_diagnostics(diagnostics: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "queue_name": diagnostics.get("queue_name"),
+        "redis_reachable": diagnostics.get("redis_reachable"),
+        "queued_job_count": diagnostics.get("queued_job_count"),
+        "started_job_count": diagnostics.get("started_job_count"),
+        "failed_job_count": diagnostics.get("failed_job_count"),
+        "finished_job_count": diagnostics.get("finished_job_count"),
+        "scheduled_job_count": diagnostics.get("scheduled_job_count"),
+        "worker_count": diagnostics.get("worker_count"),
+        "job_found": diagnostics.get("job_found"),
+        "job_id": diagnostics.get("job_id"),
+        "job_status": diagnostics.get("job_status"),
+        "message": diagnostics.get("message"),
+    }
+
+
+def _finished_status_from_result(record: DeploymentRecord) -> str:
+    result = record.result_json or {}
+    status = result.get("status")
+    if status and status not in {"queued", "running"}:
+        return status
+    deployment_status = result.get("deployment", {}).get("status")
+    if deployment_status and deployment_status not in {"queued", "running"}:
+        return deployment_status
+    return "deployed"
+
+
+def _record_queue_age(record: DeploymentRecord) -> timedelta:
+    reference = record.queued_at or record.started_at or record.updated_at or record.created_at or datetime.utcnow()
+    return datetime.utcnow() - reference
+
+
 def _billing_safety_summary(user_id: int, result: Dict[str, Any]) -> Dict[str, Any]:
     summary = _deployment_quota_snapshot(user_id)
     summary["estimated_monthly_cost_usd"] = _selected_estimated_cost(result)
@@ -1545,11 +1809,31 @@ def _status_class(status: Optional[str]) -> str:
     status = (status or "").lower()
     if status in {"deployed", "passed", "deleted"}:
         return "success"
-    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready", "cloud_account_required", "pending", "queued", "running", "blocked_by_billing_ack", "blocked_by_quota", "blocked_by_cost_limit"}:
+    if status in {"dry_run", "approval_required", "blocked_by_safety_flag", "delete_skipped", "provider_not_ready", "cloud_account_required", "pending", "queued", "running", "blocked_by_billing_ack", "blocked_by_quota", "blocked_by_cost_limit", "queue_lost", "stale_queued", "stale_running", "queue_unavailable", "cleanup_required"}:
         return "warning"
     if status in {"failed", "validation_failed", "configuration_error", "image_validation_failed", "delete_failed"}:
         return "danger"
     return ""
+
+
+def _status_label(status: Optional[str]) -> str:
+    labels = {
+        "queued": "QUEUED",
+        "running": "RUNNING",
+        "deployed": "DEPLOYED",
+        "failed": "FAILED",
+        "queue_lost": "QUEUE LOST",
+        "stale_queued": "STALE QUEUED",
+        "stale_running": "STALE RUNNING",
+        "blocked_by_billing_ack": "BILLING ACK REQUIRED",
+        "queue_unavailable": "QUEUE UNAVAILABLE",
+        "cleanup_required": "CLEANUP REQUIRED",
+        "deleted": "DELETED",
+        "dry_run": "DRY RUN",
+        "approval_required": "APPROVAL REQUIRED",
+    }
+    normalized = (status or "unknown").lower()
+    return labels.get(normalized, normalized.replace("_", " ").upper())
 
 
 def _format_dt(value) -> str:

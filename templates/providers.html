@@ -15,6 +15,16 @@
             <div class="summary-card"><span class="label">{{ name }}</span><strong>{{ value }}</strong></div>
         {% endfor %}
     </div>
+    {% if queue_status %}
+        <h2>Queue Status</h2>
+        <div class="summary-grid">
+            <div class="summary-card"><span class="label">Queue</span><strong>{{ queue_status.queue_name }}</strong></div>
+            <div class="summary-card"><span class="label">Redis Reachable</span><strong>{{ queue_status.redis_reachable }}</strong></div>
+            <div class="summary-card"><span class="label">Queued Jobs</span><strong>{{ queue_status.queued_job_count }}</strong></div>
+            <div class="summary-card"><span class="label">Failed Jobs</span><strong>{{ queue_status.failed_job_count }}</strong></div>
+        </div>
+        <p class="empty">{{ queue_status.message }} A worker must be running to process real deployments.</p>
+    {% endif %}
 </section>
 
 {% for item in readiness %}
