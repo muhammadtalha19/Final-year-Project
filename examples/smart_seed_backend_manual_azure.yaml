@@ -1,0 +1,20 @@
+app:
+  name: smart-seed-backend
+  environment: demo
+
+deployment:
+  type: container
+  container:
+    image: dockertalha19/smart-seed-backend:latest
+    port: 8000
+  health_check:
+    path: /
+
+selection:
+  mode: manual
+  provider: Azure
+
+requirements:
+  min_uptime: 99.9
+  max_monthly_cost: 20
+  region: eastus

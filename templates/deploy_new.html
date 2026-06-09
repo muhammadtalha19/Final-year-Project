@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}New Deployment{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">New Deployment</span>
+    <h1>Upload or paste YAML</h1>
+    <p class="empty">Validate YAML, choose provider mode, and generate a safe dry-run or approval-required real deployment plan.</p>
+    <div class="summary-grid">
+        {% if quota %}
+            <div class="summary-card">
+                <span class="label">Active Real Deployments</span>
+                <strong>{{ quota.active_count }}/{{ quota.active_limit }}</strong>
+                <p class="empty">Dry-runs do not count against this limit.</p>
+            </div>
+            <div class="summary-card">
+                <span class="label">Real Deployments Today</span>
+                <strong>{{ quota.real_today_count }}/{{ quota.real_today_limit }}</strong>
+                <p class="empty">Queued real deployments count after approval.</p>
+            </div>
+            <div class="summary-card">
+                <span class="label">Monthly Cost Safety Limit</span>
+                <strong>${{ quota.monthly_cost_limit_usd }}</strong>
+                <p class="empty">Applies only to real deployment approval.</p>
+            </div>
+        {% endif %}
+        {% for provider, account in (cloud_accounts or {}).items() %}
+            <div class="summary-card">
+                <span class="label">{{ provider }} Account</span>
+                <strong>{{ 'connected' if account.connected else 'not connected' }}</strong>
+                <p class="empty">
+                    {% if account.connected %}
+                        {{ account.display_name }}{% if account.region %} · {{ account.region }}{% endif %}
+                    {% else %}
+                        Real {{ provider }} deployment will be blocked.
+                    {% endif %}
+                </p>
+            </div>
+        {% endfor %}
+    </div>
+    <p><a href="{{ url_for('cloud_accounts') }}">Manage Cloud Accounts</a></p>
+    <p class="notice danger-note">Real deployments create resources in your connected cloud account and may incur charges. Dry-run remains safe and does not require billing acknowledgement.</p>
+    {% if errors %}
+        <div class="notice danger-note">
+            {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-row">
+            <label>Cloud Selection
+                <select name="cloud_selection">
+                    <option value="yaml">Use YAML selection</option>
+                    <option value="auto">Auto select best provider</option>
+                    <option value="AWS">AWS</option>
+                    <option value="Azure">Azure</option>
+                    <option value="GCP">GCP</option>
+                </select>
+            </label>
+            <label>Auto cleanup after
+                <select name="auto_cleanup_after">
+                    <option value="none">none</option>
+                    <option value="30m">30 minutes</option>
+                    <option value="1h">1 hour</option>
+                    <option value="6h">6 hours</option>
+                    <option value="24h">24 hours</option>
+                </select>
+            </label>
+        </div>
+        <label>YAML file
+            <input type="file" name="config_file" accept=".yaml,.yml,text/yaml,text/plain">
+        </label>
+        <label>YAML content
+            <textarea name="yaml_content" spellcheck="false">{{ prefilled_yaml or '' }}</textarea>
+        </label>
+        <p class="empty">If both file and textarea are provided, the textarea content is used.</p>
+        <button type="submit">Validate and Plan</button>
+    </form>
+</section>
+{% endblock %}

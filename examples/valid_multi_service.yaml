@@ -1,0 +1,19 @@
+app:
+  name: ecommerce-platform
+  environment: production
+
+services:
+  - name: login-service
+    image: myrepo/login
+    port: 5000
+    public: true
+  - name: order-service
+    image: myrepo/orders
+    port: 5001
+    public: false
+
+requirements:
+  max_monthly_cost_usd: 30
+  min_uptime_percent: 99.9
+  preferred_region: asia
+  public_access: true

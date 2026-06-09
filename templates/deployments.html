@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Deployment History{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">History</span>
+    <h1>Your Deployments</h1>
+    <p class="empty">Open details, reports, refresh status, or clean up real deployments you own.</p>
+    {% include "_deployment_table.html" with context %}
+</section>
+{% endblock %}

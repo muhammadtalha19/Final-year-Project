@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Demo Scenarios{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Supervisor Demo</span>
+    <h1>Demo Scenarios</h1>
+    <p class="empty">Use these ready-made stories to demonstrate static web, backend API, and ML API deployment planning. Dry-run is recommended for live demos.</p>
+</section>
+
+<section class="grid card-grid">
+    {% for scenario in scenarios %}
+        {% set template = templates.get(scenario.template, {}) %}
+        <article class="panel">
+            <span class="label">{{ scenario.title }}</span>
+            <h2>{{ scenario.name }}</h2>
+            <p>{{ scenario.story }}</p>
+            <div class="meta">
+                <div><span class="label">Image</span>{{ scenario.image }}</div>
+                <div><span class="label">Port</span>{{ scenario.port }}</div>
+                <div><span class="label">Health</span>{{ scenario.health }}</div>
+            </div>
+            <h3>YAML Preview</h3>
+            <pre>{{ template.yaml }}</pre>
+            <div class="action-list">
+                <a class="button" href="{{ url_for('deploy_new', template=scenario.template) }}">Use Template</a>
+                <a class="button secondary" href="{{ url_for('deploy_wizard') }}">Open Wizard</a>
+            </div>
+        </article>
+    {% endfor %}
+</section>
+{% endblock %}

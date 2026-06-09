@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ current_user.theme_preference if current_user.is_authenticated else 'system' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Multi-Cloud Orchestrator{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div class="brand">
+                <a class="brand-link" href="{{ url_for('landing') }}">YAML Cloud Orchestrator</a>
+                <p class="subtitle">User-owned multi-cloud deployment portal</p>
+            </div>
+            <div class="topbar-actions">
+                {% if current_user.is_authenticated %}
+                    <span class="user-chip" title="{{ current_user.email }}">{{ current_user.name }}</span>
+                    <button type="button" class="theme-toggle" id="theme-toggle" data-authenticated="true">Theme</button>
+                    <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="site-drawer" aria-expanded="false">
+                        <span aria-hidden="true"></span>
+                        <span aria-hidden="true"></span>
+                        <span aria-hidden="true"></span>
+                    </button>
+                {% else %}
+                    <nav class="public-nav" aria-label="Public navigation">
+                        <button type="button" class="theme-toggle" id="theme-toggle" data-authenticated="false">Theme</button>
+                        <a href="{{ url_for('login') }}">Login</a>
+                        <a class="secondary" href="{{ url_for('register') }}">Register</a>
+                    </nav>
+                {% endif %}
+            </div>
+        </header>
+
+        {% if current_user.is_authenticated %}
+            <div class="drawer-overlay" id="drawer-overlay" hidden></div>
+            <aside class="nav-drawer" id="site-drawer" aria-label="Portal navigation" aria-hidden="true" inert>
+                <div class="drawer-header">
+                    <div>
+                        <strong>Menu</strong>
+                        <p class="empty">{{ current_user.email }}</p>
+                    </div>
+                    <button type="button" class="drawer-close" id="drawer-close" aria-label="Close navigation menu">×</button>
+                </div>
+                <nav class="drawer-nav" aria-label="Portal menu">
+                    <a class="{{ 'active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}">Dashboard</a>
+                    <a class="{{ 'active' if request.endpoint in ['deploy_new', 'deploy_legacy_post'] else '' }}" href="{{ url_for('deploy_new') }}">New Deployment</a>
+                    <a class="{{ 'active' if request.endpoint == 'deploy_wizard' else '' }}" href="{{ url_for('deploy_wizard') }}">Deployment Wizard</a>
+                    <a class="{{ 'active' if request.endpoint in ['deployments', 'deployment_detail'] else '' }}" href="{{ url_for('deployments') }}">History</a>
+                    <a class="{{ 'active' if request.endpoint in ['cloud_accounts', 'connect_cloud_account'] else '' }}" href="{{ url_for('cloud_accounts') }}">Cloud Accounts</a>
+                    <a class="{{ 'active' if request.endpoint == 'providers' else '' }}" href="{{ url_for('providers') }}">Providers</a>
+                    <a class="{{ 'active' if request.endpoint == 'templates_library' else '' }}" href="{{ url_for('templates_library') }}">Templates</a>
+                    <a class="{{ 'active' if request.endpoint == 'demo_scenarios' else '' }}" href="{{ url_for('demo_scenarios') }}">Demo Scenarios</a>
+                    <a class="{{ 'active' if request.endpoint == 'production_readiness' else '' }}" href="{{ url_for('production_readiness') }}">Production Readiness</a>
+                    <a class="{{ 'active' if request.endpoint == 'audit_logs' else '' }}" href="{{ url_for('audit_logs') }}">Audit Log</a>
+                    <a class="{{ 'active' if request.endpoint == 'settings' else '' }}" href="{{ url_for('settings') }}">Settings</a>
+                    {% if current_user.role == 'admin' %}
+                        <a class="{{ 'active' if request.endpoint in ['admin_dashboard', 'admin_users', 'admin_deployments'] else '' }}" href="{{ url_for('admin_dashboard') }}">Admin</a>
+                    {% endif %}
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </nav>
+            </aside>
+        {% endif %}
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <section class="panel flash-panel" aria-label="Messages">
+                    {% for message in messages %}
+                        <p class="notice">{{ message }}</p>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+app:
+  name: expense-tracker
+  environment: production
+
+selection:
+  mode: manual
+  provider: AWS
+
+deployment:
+  type: container
+  image: dockertalha19/expense-tracker-react:latest
+  port: 80
+  replicas: 1
+
+requirements:
+  max_monthly_cost_usd: 15
+  min_uptime_percent: 99.9
+  preferred_region: asia
+  public_access: true

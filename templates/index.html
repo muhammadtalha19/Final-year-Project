@@ -1,250 +1,826 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Multi-Cloud Deployment Orchestrator</title>
-
     <style>
-        body {
-            font-family: "Segoe UI", Arial, sans-serif;
-            background-color: #eef2f7;
-            margin: 0;
-            padding: 0;
+        :root {
+            color-scheme: light;
+            --bg: #f4f6f8;
+            --panel: #ffffff;
+            --text: #1f2933;
+            --muted: #64748b;
+            --line: #d9e2ec;
+            --primary: #1769aa;
+            --success: #16794c;
+            --warning: #a15c00;
+            --danger: #b42318;
         }
 
-        .container {
-            width: 85%;
-            margin: 30px auto;
-            background: #ffffff;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", Arial, sans-serif;
+            line-height: 1.5;
+        }
+
+        .shell {
+            width: min(1180px, calc(100% - 32px));
+            margin: 28px auto 40px;
         }
 
         header {
-            text-align: center;
-            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            align-items: flex-start;
+            margin-bottom: 18px;
         }
 
-        header h1 {
+        h1 {
             margin: 0;
-            color: #2c3e50;
+            font-size: clamp(24px, 4vw, 36px);
+            letter-spacing: 0;
         }
 
-        header p {
-            margin-top: 8px;
-            color: #555;
-            font-size: 15px;
+        .subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+        }
+
+        nav {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        nav a,
+        button {
+            border: 1px solid var(--primary);
+            background: var(--primary);
+            color: white;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        nav a.secondary {
+            background: white;
+            color: var(--primary);
+        }
+
+        .grid {
+            display: grid;
+            gap: 18px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 20px;
         }
 
         h2 {
-            color: #34495e;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 6px;
+            margin: 0 0 14px;
+            font-size: 20px;
+            letter-spacing: 0;
         }
 
-        .section {
-            margin-top: 30px;
+        h3 {
+            margin: 20px 0 10px;
+            font-size: 16px;
+            letter-spacing: 0;
         }
 
-        .card {
-            background: #f9fafc;
-            padding: 18px;
-            border-radius: 6px;
-            margin-top: 12px;
-            border-left: 6px solid #3498db;
-        }
-
-        .success {
-            border-left-color: #2ecc71;
-            background: #ecf9f1;
-        }
-
-        .warning {
-            border-left-color: #f39c12;
-            background: #fef5e7;
-        }
-
-        .info {
-            border-left-color: #9b59b6;
-            background: #f5eef8;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
-            color: #fff;
-        }
-
-        .badge-aws {
-            background: #ff9900;
-        }
-
-        .badge-success {
-            background: #27ae60;
-        }
-
-        .badge-info {
-            background: #2980b9;
-        }
-
-        button {
-            padding: 12px 22px;
-            background-color: #3498db;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 15px;
-        }
-
-        button:hover {
-            background-color: #2980b9;
+        form {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
         }
 
         input[type="file"] {
+            min-width: min(100%, 300px);
+            padding: 9px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fbfdff;
+        }
+
+        select {
+            min-width: min(100%, 240px);
+            padding: 9px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fbfdff;
+            color: var(--text);
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: #e8eef5;
+            color: #334e68;
+        }
+
+        .status.success {
+            background: #def7ec;
+            color: var(--success);
+        }
+
+        .status.warning {
+            background: #fff4d6;
+            color: var(--warning);
+        }
+
+        .status.danger {
+            background: #fde8e8;
+            color: var(--danger);
+        }
+
+        .meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 12px;
+            margin: 12px 0;
+        }
+
+        .meta div {
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            padding: 12px;
+            background: #fbfdff;
+        }
+
+        .label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
             margin-top: 10px;
             font-size: 14px;
         }
 
+        th,
+        td {
+            border-bottom: 1px solid var(--line);
+            padding: 10px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f7fafc;
+            color: #334e68;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
         ul {
-            margin-top: 10px;
-        }
-
-        ul li {
-            margin-bottom: 6px;
-        }
-
-        pre {
-            background: #2c3e50;
-            color: #ecf0f1;
-            padding: 16px;
-            border-radius: 6px;
-            overflow-x: auto;
-            font-size: 13px;
+            margin: 8px 0 0 20px;
+            padding: 0;
         }
 
         a {
-            color: #2980b9;
-            font-weight: bold;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .empty {
+            color: var(--muted);
+            margin: 0;
+        }
+
+        .notice {
+            border-left: 4px solid var(--warning);
+            background: #fffbeb;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px 0;
+        }
+
+        pre {
+            margin: 8px 0 14px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #111827;
+            color: #f8fafc;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+
+        .delete-form {
+            display: inline-flex;
+        }
+
+        .delete-button {
+            border-color: var(--danger);
+            background: white;
+            color: var(--danger);
+            padding: 7px 11px;
+        }
+
+        .action-list {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .report-link {
+            display: inline-flex;
+            border: 1px solid var(--primary);
+            border-radius: 6px;
+            padding: 7px 11px;
             text-decoration: none;
+            background: white;
         }
 
-        a:hover {
-            text-decoration: underline;
-        }
+        @media (max-width: 700px) {
+            header {
+                display: block;
+            }
 
-        footer {
-            text-align: center;
-            margin-top: 40px;
-            font-size: 13px;
-            color: #7f8c8d;
+            nav {
+                margin-top: 14px;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
         }
     </style>
 </head>
-
 <body>
-
-<div class="container">
-
+<main class="shell">
     <header>
-        <h1>Multi-Cloud Deployment Orchestrator</h1>
-        <p>
-            A YAML-driven system for automated cloud selection and application deployment
-        </p>
+        <div>
+            <h1>Multi-Cloud Deployment Orchestrator</h1>
+            <p class="subtitle">YAML-based cloud selection and container deployment dashboard.</p>
+        </div>
+        <nav aria-label="Dashboard navigation">
+            <a href="/">Deploy</a>
+            <a href="/history" class="secondary">History</a>
+        </nav>
     </header>
 
-    <!-- INPUT -->
-    <div class="section">
-        <h2>1. Deployment Configuration Input</h2>
-
-        <div class="card info">
-            <p>
-                Upload a YAML file describing the application, container image,
-                deployment constraints, and availability requirements.
-            </p>
-
+    <div class="grid">
+        <section class="panel">
+            <h2>Upload YAML</h2>
             <form method="POST" action="/deploy" enctype="multipart/form-data">
-                <label><strong>Select YAML Configuration File</strong></label><br>
-                <input type="file" name="config_file" accept=".yaml,.yml" required><br><br>
-                <button type="submit">Deploy Using Orchestrator</button>
+                <input type="file" name="config_file" accept=".yaml,.yml" required>
+                <label>
+                    <span class="label">Cloud Selection</span>
+                    <select name="cloud_selection">
+                        <option value="yaml" selected>Use YAML selection</option>
+                        <option value="auto">Auto select best provider</option>
+                        <option value="AWS">AWS</option>
+                        <option value="Azure">Azure</option>
+                        <option value="GCP">GCP</option>
+                    </select>
+                </label>
+                <button type="submit">Run Orchestrator</button>
             </form>
-        </div>
-    </div>
+        </section>
 
-    {% if result %}
-
-    <!-- DECISION -->
-    <div class="section">
-        <h2>2. Cloud Selection & Decision Engine</h2>
-
-        <div class="card">
-            <p><strong>Application Name:</strong> {{ result.app }}</p>
-            <p><strong>Environment:</strong> {{ result.environment }}</p>
-
+        {% if result %}
+        <section class="panel">
+            <h2>Deployment Result</h2>
+            {% set state = result.status or "unknown" %}
+            {% set decision = result.decision or {} %}
+            {% set deployment = result.deployment or {} %}
+            {% set health = result.health_check or {} %}
+            {% set public_url = result.public_endpoints[0].url if result.public_endpoints else "N/A" %}
             <p>
-                <strong>Selected Cloud:</strong>
-                <span class="badge badge-aws">
-                    {{ result.decision.selected_cloud }}
+                <span class="status {% if state in ['deployed', 'passed', 'deleted'] %}success{% elif state in ['validation_failed', 'requirements_not_satisfied', 'failed', 'manual_selection_blocked', 'provider_not_ready', 'image_validation_failed', 'delete_failed'] %}danger{% elif state in ['not_executed', 'execution_skipped', 'configuration_error', 'dry_run', 'blocked_by_safety_flag', 'approval_required', 'delete_skipped'] %}warning{% endif %}">
+                    {{ state|replace("_", " ") }}
                 </span>
             </p>
 
-            <p><strong>Decision Reason:</strong> {{ result.decision.reason }}</p>
-        </div>
-    </div>
+            <div class="meta">
+                <div>
+                    <span class="label">Selected Provider</span>
+                    {{ decision.selected_provider or "None" }}
+                </div>
+                <div>
+                    <span class="label">Deployment Mode</span>
+                    {{ result.deployment_mode or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Status</span>
+                    {{ deployment.status or result.status or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Public URL</span>
+                    {% if result.public_endpoints %}
+                        <a href="{{ public_url }}" target="_blank" rel="noreferrer">{{ public_url }}</a>
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </div>
+                <div>
+                    <span class="label">Health</span>
+                    {{ health.result or health.status or "N/A" }}
+                </div>
+            </div>
 
-    <!-- EXECUTION -->
-    <div class="section">
-        <h2>3. Deployment Execution</h2>
+            {% if result.validation_errors %}
+                <h3>Validation Errors</h3>
+                <ul>
+                    {% for error in result.validation_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
 
-        <div class="card success">
-            <span class="badge badge-success">SUCCESS</span>
-            <p><strong>Deployment Status:</strong> Application deployed successfully</p>
+            {% if result.warnings %}
+                <div class="notice">
+                    <strong>Warnings</strong>
+                    <ul>
+                        {% for warning in result.warnings %}
+                            <li>{{ warning }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
 
-            <ul>
-                {% for step in result.deployment_steps %}
-                    <li>{{ step }}</li>
+            {% set image_validation = result.docker_image_validation or {} %}
+            {% if image_validation.checks %}
+                <h3>Docker Image Validation</h3>
+                <div class="meta">
+                    <div>
+                        <span class="label">Check Type</span>
+                        {{ image_validation.check_type or "syntax_only" }}
+                    </div>
+                    <div>
+                        <span class="label">Valid</span>
+                        {{ "Yes" if image_validation.valid else "No" }}
+                    </div>
+                </div>
+                {% if image_validation.errors %}
+                    <div class="notice">
+                        <strong>Image validation issues</strong>
+                        <ul>
+                            {% for error in image_validation.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                {% if image_validation.warnings %}
+                    <div class="notice">
+                        <strong>Image warnings</strong>
+                        <ul>
+                            {% for warning in image_validation.warnings %}
+                                <li>{{ warning }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Image</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for check in image_validation.checks %}
+                        <tr>
+                            <td>{{ check.service }}</td>
+                            <td>{{ check.image or "N/A" }}</td>
+                            <td>
+                                <span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">
+                                    {{ check.status }}
+                                </span>
+                            </td>
+                            <td>{{ check.message }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+
+            {% set readiness = result.provider_readiness or {} %}
+            {% if readiness.checks %}
+                <h3>Provider Readiness</h3>
+                <div class="meta">
+                    <div>
+                        <span class="label">Provider</span>
+                        {{ readiness.provider or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">Ready</span>
+                        {{ "Yes" if readiness.ready else "No" }}
+                    </div>
+                    <div>
+                        <span class="label">Missing</span>
+                        {% if readiness.missing %}{{ readiness.missing|join(", ") }}{% else %}None{% endif %}
+                    </div>
+                </div>
+                {% if readiness.warnings %}
+                    <div class="notice">
+                        <strong>Readiness warnings</strong>
+                        <ul>
+                            {% for warning in readiness.warnings %}
+                                <li>{{ warning }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Check</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for check in readiness.checks %}
+                        <tr>
+                            <td>{{ check.name }}</td>
+                            <td>
+                                <span class="status {% if check.status == 'passed' %}success{% elif check.status == 'failed' %}danger{% else %}warning{% endif %}">
+                                    {{ check.status }}
+                                </span>
+                            </td>
+                            <td>{{ check.message }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+
+            {% set bootstrap = result.bootstrap_plan or {} %}
+            {% if bootstrap.commands %}
+                <h3>Bootstrap Suggestions</h3>
+                <div class="notice">
+                    <strong>{{ bootstrap.provider }} setup plan</strong>
+                    <p>{{ bootstrap.message }}</p>
+                    {% if bootstrap.missing_resources %}
+                        <p><strong>Likely missing:</strong> {{ bootstrap.missing_resources|join(", ") }}</p>
+                    {% endif %}
+                    {% for command in bootstrap.commands %}
+                        <pre>{{ command }}</pre>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            {% if decision %}
+                <div class="meta">
+                    <div>
+                        <span class="label">Application</span>
+                        {{ result.app or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">Environment</span>
+                        {{ result.environment or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">App Type</span>
+                        {{ result.app_type or "api" }}
+                    </div>
+                    <div>
+                        <span class="label">Selected Provider</span>
+                        {{ decision.selected_provider or "None" }}
+                    </div>
+                    <div>
+                        <span class="label">Execution Provider</span>
+                        {{ decision.execution_provider or "None" }}
+                    </div>
+                    <div>
+                        <span class="label">Selection Mode</span>
+                        {{ decision.selection_mode or "auto" }}
+                    </div>
+                    <div>
+                        <span class="label">Manual Provider</span>
+                        {{ decision.manual_provider or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">Recommended Provider</span>
+                        {{ decision.recommended_provider or "N/A" }}
+                    </div>
+                    <div>
+                        <span class="label">Deployment Mode</span>
+                        {{ result.deployment_mode or "N/A" }}
+                    </div>
+                </div>
+
+                <h3>Decision Reasoning</h3>
+                <p>{{ decision.reason }}</p>
+
+                {% if decision.evaluated_providers %}
+                    <h3>Provider Evaluation</h3>
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Eligible</th>
+                            <th>Cost</th>
+                            <th>Pricing Type</th>
+                            <th>Pricing Source</th>
+                            <th>Pricing Notes</th>
+                            <th>Uptime</th>
+                            <th>Score</th>
+                            <th>Rejection Reasons</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for provider in decision.evaluated_providers %}
+                            <tr>
+                                <td>{{ provider.provider }}</td>
+                                <td>
+                                    <span class="status {% if provider.eligible %}success{% else %}danger{% endif %}">
+                                        {{ "yes" if provider.eligible else "no" }}
+                                    </span>
+                                </td>
+                                <td>${{ provider.estimated_cost_usd }}/mo</td>
+                                <td>{{ provider.pricing_type or "N/A" }}</td>
+                                <td>{{ provider.pricing_source or "N/A" }}</td>
+                                <td>
+                                    {% if provider.pricing_notes %}
+                                        {{ provider.pricing_notes|join("; ") }}
+                                    {% else %}
+                                        None
+                                    {% endif %}
+                                </td>
+                                <td>{{ provider.uptime_percent }}%</td>
+                                <td>{{ provider.score }}</td>
+                                <td>
+                                    {% if provider.rejection_reasons %}
+                                        {{ provider.rejection_reasons|join("; ") }}
+                                    {% else %}
+                                        None
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                {% endif %}
+            {% endif %}
+
+            <h3>Deployment Status</h3>
+            <div class="meta">
+                <div>
+                    <span class="label">Mode</span>
+                    {{ result.deployment_mode or deployment.deployment_mode or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Status</span>
+                    {{ deployment.status or result.status or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Provider</span>
+                    {{ deployment.provider or decision.execution_provider or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Instance ID</span>
+                    {{ deployment.instance_id or "N/A" }}
+                </div>
+            </div>
+            {% if deployment.message %}
+                <p>{{ deployment.message }}</p>
+            {% endif %}
+            {% if deployment.missing_vars %}
+                <div class="notice">
+                    <strong>Configuration errors</strong>
+                    <ul>
+                        {% for variable in deployment.missing_vars %}
+                            <li>{{ variable }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            {% if result.deployment_steps %}
+                <ul>
+                    {% for step in result.deployment_steps %}
+                        <li>{{ step }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% set commands = result.generated_commands or deployment.generated_commands %}
+            {% if commands %}
+                <h3>Generated Commands</h3>
+                {% for command in commands %}
+                    <p><strong>{{ command.service or "service" }}</strong></p>
+                    <pre>{{ command.command_string or command.command|join(" ") }}</pre>
                 {% endfor %}
-            </ul>
-        </div>
+            {% endif %}
+
+            {% set approval = result.approval or {} %}
+            {% if approval.required %}
+                <h3>Real Deployment Approval</h3>
+                <div class="notice">
+                    <strong>Approval required</strong>
+                    <p>{{ approval.warning }}</p>
+                    <div class="meta">
+                        <div>
+                            <span class="label">Application</span>
+                            {{ approval.app_name or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Selected Provider</span>
+                            {{ approval.selected_provider or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Execution Provider</span>
+                            {{ approval.execution_provider or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Docker Image</span>
+                            {{ approval.docker_image or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Port</span>
+                            {{ approval.port or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Access</span>
+                            {{ approval.access or "N/A" }}
+                        </div>
+                        <div>
+                            <span class="label">Estimated Cost</span>
+                            {% if approval.estimated_cost_usd is not none %}${{ approval.estimated_cost_usd }}/mo{% else %}N/A{% endif %}
+                        </div>
+                        <div>
+                            <span class="label">Readiness</span>
+                            {{ "Ready" if approval.readiness_ready else "Not ready" }}
+                        </div>
+                    </div>
+                    <form method="POST" action="/deploy">
+                        <input type="hidden" name="confirm_real_deployment" value="true">
+                        <textarea name="config_yaml" hidden>{{ approval.config_yaml }}</textarea>
+                        <button type="submit">Confirm Real Deployment</button>
+                    </form>
+                </div>
+            {% endif %}
+
+            <h3>Public Endpoints</h3>
+            {% if result.public_endpoints %}
+                <ul>
+                    {% for endpoint in result.public_endpoints %}
+                        <li><a href="{{ endpoint.url }}" target="_blank" rel="noreferrer">{{ endpoint.name }} - {{ endpoint.url }}</a></li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="empty">No public endpoint returned.</p>
+            {% endif %}
+
+            <h3>Health Check</h3>
+            <div class="meta">
+                <div>
+                    <span class="label">Result</span>
+                    {{ health.result or health.status or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">URL</span>
+                    {{ health.url or "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Status Code</span>
+                    {{ health.status_code if health.status_code is not none else "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Response Time</span>
+                    {% if health.response_time_ms is not none %}{{ health.response_time_ms }} ms{% else %}N/A{% endif %}
+                </div>
+                <div>
+                    <span class="label">Attempts</span>
+                    {{ health.attempts if health.attempts is not none else "N/A" }}
+                </div>
+                <div>
+                    <span class="label">Message</span>
+                    {{ health.message or "N/A" }}
+                </div>
+            </div>
+
+            {% set diagnostics = result.diagnostics or {} %}
+            {% if diagnostics.provider_messages or diagnostics.action_hint or diagnostics.raw_error_summary or diagnostics.next_steps or diagnostics.log_commands %}
+                <h3>Diagnostics / Logs</h3>
+                {% if diagnostics.action_hint %}
+                    <div class="notice">
+                        <strong>Action hint</strong>
+                        <p>{{ diagnostics.action_hint }}</p>
+                    </div>
+                {% endif %}
+                {% if diagnostics.raw_error_summary %}
+                    <p><strong>Error summary:</strong> {{ diagnostics.raw_error_summary }}</p>
+                {% endif %}
+                {% if diagnostics.next_steps %}
+                    <ul>
+                        {% for step in diagnostics.next_steps %}
+                            <li>{{ step }}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+                {% if diagnostics.log_commands %}
+                    {% for command in diagnostics.log_commands %}
+                        <p><strong>{{ command.label or "Logs" }}</strong></p>
+                        <pre>{{ command.command_string or command.command|join(" ") }}</pre>
+                    {% endfor %}
+                {% endif %}
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <section class="panel">
+            <h2>Deployment History</h2>
+            {% if delete_result %}
+                <div class="notice">
+                    <strong>Cleanup result:</strong>
+                    <span class="status {% if delete_result.status == 'deleted' %}success{% elif delete_result.status == 'delete_failed' %}danger{% else %}warning{% endif %}">
+                        {{ delete_result.status|replace("_", " ") }}
+                    </span>
+                    <p>{{ delete_result.message }}</p>
+                </div>
+            {% endif %}
+            {% if history %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>App</th>
+                        <th>Type</th>
+                        <th>Selected</th>
+                        <th>Execution</th>
+                        <th>Status</th>
+                        <th>Endpoints</th>
+                        <th>Action</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for record in history %}
+                        <tr>
+                            <td>{{ record.timestamp }}</td>
+                            <td>{{ record.app_name or "N/A" }}</td>
+                            <td>{{ record.app_type or "N/A" }}</td>
+                            <td>{{ record.selected_provider or "None" }}</td>
+                            <td>{{ record.execution_provider or "None" }}</td>
+                            <td>{{ record.status }}</td>
+                            <td>
+                                {% if record.public_endpoints %}
+                                    {% for endpoint in record.public_endpoints %}
+                                        <a href="{{ endpoint.url }}" target="_blank" rel="noreferrer">{{ endpoint.url }}</a>{% if not loop.last %}<br>{% endif %}
+                                    {% endfor %}
+                                {% else %}
+                                    None
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="action-list">
+                                    {% if record.id %}
+                                        <a class="report-link" href="/deployment-report/{{ record.id }}">Report</a>
+                                    {% endif %}
+                                    {% if record.id and record.deployment_mode == "real" and record.execution_provider in ["AWS", "Azure", "GCP"] and record.status in ["deployed", "delete_failed"] %}
+                                        <form class="delete-form" method="POST" action="/deployments/{{ record.id }}/delete">
+                                            <button class="delete-button" type="submit">Delete</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if not record.id %}
+                                        None
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="empty">No deployment history yet.</p>
+            {% endif %}
+        </section>
     </div>
-
-    <!-- OUTPUT -->
-    {% if result.public_ip %}
-    <div class="section">
-        <h2>4. Application Access</h2>
-
-        <div class="card warning">
-            <p>
-                The deployed application is publicly accessible at:
-            </p>
-            <p>
-                <a href="http://{{ result.public_ip }}" target="_blank">
-                    http://{{ result.public_ip }}
-                </a>
-            </p>
-        </div>
-    </div>
-    {% endif %}
-
-    {% else %}
-
-    <div class="section">
-        <div class="card">
-            <p>No deployment has been triggered yet. Please upload a YAML file to begin.</p>
-        </div>
-    </div>
-
-    {% endif %}
-
-    <footer>
-        Final Year Project – Multi-Cloud Deployment Orchestrator<br>
-        Department of Computer Science
-    </footer>
-
-</div>
-
+</main>
 </body>
 </html>

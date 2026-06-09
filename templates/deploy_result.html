@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Deployment Result{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Deployment Result</span>
+    <h1>{{ record.app_name or result.app or 'Deployment' }}</h1>
+    <div class="action-list">
+        <a class="button secondary" href="{{ url_for('deployment_detail', deployment_id=record.id) }}">Open Detail</a>
+        <a class="button secondary" href="{{ url_for('deployment_report', deployment_id=record.id) }}">Report</a>
+        <a class="button secondary" href="{{ url_for('deployments') }}">History</a>
+    </div>
+</section>
+{% include "_result_sections.html" %}
+{% endblock %}

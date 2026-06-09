@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Deployment Detail{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Deployment Detail</span>
+    <h1>{{ record.app_name or 'Deployment' }}</h1>
+    <p class="empty">Review provider reasoning, commands, timeline, health, diagnostics, YAML, and cleanup options.</p>
+    <div class="action-list">
+        <a class="button secondary" href="{{ url_for('deployment_report', deployment_id=record.id) }}">Report</a>
+        <form class="inline-form" method="post" action="{{ url_for('refresh_deployment', deployment_id=record.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="button secondary">Refresh</button>
+        </form>
+        {% if record.deployment_mode == 'real' and record.status == 'deployed' %}
+            <form class="inline-form" method="post" action="{{ url_for('delete_saved_deployment', deployment_id=record.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="delete-button">Delete</button>
+            </form>
+        {% endif %}
+    </div>
+</section>
+{% include "_result_sections.html" %}
+<section class="panel">
+    <h2>YAML Content</h2>
+    <pre>{{ record.yaml_content }}</pre>
+</section>
+{% endblock %}

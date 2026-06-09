@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Dashboard</span>
+    <h1>Welcome, {{ current_user.name }}</h1>
+    <p class="empty">Review your deployment activity, provider readiness, and recent orchestration results.</p>
+    <div class="action-list">
+        <a class="button" href="{{ url_for('deploy_new') }}">New Deployment</a>
+        <a class="button secondary" href="{{ url_for('deployments') }}">View History</a>
+        <a class="button secondary" href="{{ url_for('cloud_accounts') }}">Cloud Accounts</a>
+        <a class="button secondary" href="{{ url_for('providers') }}">Provider Readiness</a>
+    </div>
+</section>
+
+<section class="summary-grid">
+    <div class="summary-card"><span class="label">Total</span><strong>{{ analytics.total }}</strong></div>
+    <div class="summary-card"><span class="label">Dry-runs</span><strong>{{ analytics.dry_run }}</strong></div>
+    <div class="summary-card"><span class="label">Real</span><strong>{{ analytics.real }}</strong></div>
+    <div class="summary-card"><span class="label">Failed</span><strong>{{ analytics.failed }}</strong></div>
+    <div class="summary-card"><span class="label">Deployed</span><strong>{{ analytics.deployed }}</strong></div>
+    <div class="summary-card"><span class="label">Deleted</span><strong>{{ analytics.deleted }}</strong></div>
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>By Provider</h2>
+        {% for provider, count in analytics.by_provider.items() %}
+            <div class="bar-row"><span>{{ provider }}</span><div class="bar"><span style="width: {{ (count / analytics.total * 100) if analytics.total else 0 }}%"></span></div><strong>{{ count }}</strong></div>
+        {% else %}
+            <p class="empty">No deployments yet.</p>
+        {% endfor %}
+    </article>
+    <article class="panel">
+        <h2>By App Type</h2>
+        {% for app_type, count in analytics.by_app_type.items() %}
+            <div class="bar-row"><span>{{ app_type }}</span><div class="bar"><span style="width: {{ (count / analytics.total * 100) if analytics.total else 0 }}%"></span></div><strong>{{ count }}</strong></div>
+        {% else %}
+            <p class="empty">No deployments yet.</p>
+        {% endfor %}
+    </article>
+    <article class="panel">
+        <h2>Provider Readiness</h2>
+        {% for item in readiness %}
+            <p><strong>{{ item.provider }}</strong> <span class="status {{ status_class('deployed' if item.readiness.ready else 'provider_not_ready') }}">{{ 'Ready' if item.readiness.ready else 'Needs setup' }}</span></p>
+        {% endfor %}
+    </article>
+</section>
+
+<section class="panel">
+    <h2>Latest Deployments</h2>
+    {% include "_deployment_table.html" with context %}
+</section>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Connect {{ provider }}{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Cloud Account</span>
+    <h1>Connect {{ provider }}</h1>
+    <p>Secret fields are encrypted on save and cleared from the form. They will not be shown again.</p>
+    {% if errors %}
+        <div class="notice danger-note">
+            {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+    {% endif %}
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Display name
+            <input type="text" name="display_name" value="{{ account.display_name if account else '' }}" placeholder="{{ provider }} account">
+        </label>
+        {% for field in fields %}
+            <label>{{ field.label }}{% if field.required %} *{% endif %}
+                {% if field.textarea %}
+                    <textarea name="{{ field.name }}" spellcheck="false" {% if field.required %}required{% endif %}></textarea>
+                {% else %}
+                    <input
+                        type="{{ 'password' if field.secret else 'text' }}"
+                        name="{{ field.name }}"
+                        value="{{ field.default or '' }}"
+                        {% if field.required %}required{% endif %}
+                        autocomplete="off">
+                {% endif %}
+            </label>
+        {% endfor %}
+        <button type="submit">Save {{ provider }} Account</button>
+        <a class="button secondary" href="{{ url_for('cloud_accounts') }}">Cancel</a>
+    </form>
+</section>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}YAML Cloud Orchestrator{% endblock %}
+{% block content %}
+<section class="panel hero">
+    <div>
+        <span class="label">Final Year Project Portal</span>
+        <h1>Deploy container apps from YAML with safe multi-cloud controls.</h1>
+        <p>
+            Upload a YAML file, let the decision engine compare AWS, Azure, and GCP, review the dry-run plan,
+            connect your own cloud account, and approve real deployment only when safety flags allow it.
+        </p>
+        <div class="action-list">
+            {% if current_user.is_authenticated %}
+                <a class="button" href="{{ url_for('dashboard') }}">Open Dashboard</a>
+                <a class="button secondary" href="{{ url_for('deploy_new') }}">New Deployment</a>
+            {% else %}
+                <a class="button" href="{{ url_for('register') }}">Create Account</a>
+                <a class="button secondary" href="{{ url_for('login') }}">Login</a>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>What it supports</h2>
+        <p>Static web apps, backend APIs, and small ML API containers are validated with cost, uptime, region, and public access requirements.</p>
+    </article>
+    <article class="panel">
+        <h2>Safe by default</h2>
+        <p>Dry-run mode is the default. Real AWS EC2, Azure Container Apps, or GCP Cloud Run deployment requires your connected cloud account, environment safety flags, and a POST approval step.</p>
+    </article>
+    <article class="panel">
+        <h2>Operational output</h2>
+        <p>Each deployment record keeps provider reasoning, generated commands, public URL, health status, diagnostics, reports, and cleanup actions.</p>
+    </article>
+</section>
+{% endblock %}

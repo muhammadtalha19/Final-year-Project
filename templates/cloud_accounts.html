@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Cloud Accounts{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Model B</span>
+    <h1>Your Cloud Accounts</h1>
+    <p>Deployments run in your connected cloud account. You own resources and billing. Credentials are encrypted server-side and secret values are never displayed.</p>
+    {% if not encryption_configured %}
+        <p class="notice danger-note">CREDENTIAL_ENCRYPTION_KEY is not configured. Saving cloud credentials is disabled until the server is configured.</p>
+    {% endif %}
+</section>
+
+<section class="grid card-grid">
+    {% for provider in providers %}
+        {% set account = accounts[provider] %}
+        {% set readiness = readiness_by_provider.get(provider, {}) %}
+        <article class="panel">
+            <h2>{{ provider }}</h2>
+            <p><span class="status {{ status_class('deployed' if account.connected else 'provider_not_ready') }}">{{ 'connected' if account.connected else 'not connected' }}</span></p>
+            <div class="meta">
+                <div><span class="label">Display Name</span>{{ account.display_name or provider }}</div>
+                <div><span class="label">Region</span>{{ account.region or 'N/A' }}</div>
+                <div><span class="label">Project</span>{{ account.project_id or 'N/A' }}</div>
+                <div><span class="label">Subscription</span>{{ account.subscription_id or 'N/A' }}</div>
+                <div>
+                    <span class="label">Readiness Score</span>
+                    {% if not account.connected %}
+                        Not connected
+                    {% elif readiness.ready %}
+                        Ready
+                    {% elif readiness.missing %}
+                        Blocked
+                    {% else %}
+                        Partially ready
+                    {% endif %}
+                </div>
+                <div><span class="label">Status</span>{{ account.status }}</div>
+                <div><span class="label">Last Checked</span>{{ format_dt(account.last_checked_at) }}</div>
+            </div>
+            {% if readiness.missing %}
+                <p><strong>Missing:</strong> {{ readiness.missing | join(', ') }}</p>
+            {% endif %}
+            <div class="action-list">
+                <a class="button" href="{{ url_for('connect_cloud_account', provider=provider.lower()) }}">{{ 'Update' if account.connected else 'Connect' }}</a>
+                {% if account.connected %}
+                    <form class="inline-form" method="post" action="{{ url_for('delete_cloud_account', account_id=account.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="delete-button">Delete</button>
+                    </form>
+                {% endif %}
+            </div>
+        </article>
+    {% endfor %}
+</section>
+{% endblock %}

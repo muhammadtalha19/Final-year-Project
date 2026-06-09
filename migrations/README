@@ -1,0 +1,5 @@
+Single-database configuration for Flask-Migrate/Alembic.
+
+Use `flask db upgrade` or `python manage_db.py upgrade` to apply migrations
+without deleting local users, cloud accounts, encrypted credentials, deployment
+history, reports, or audit logs.

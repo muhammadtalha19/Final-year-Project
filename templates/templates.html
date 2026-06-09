@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}YAML Templates{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Template Library</span>
+    <h1>Start from a safe YAML template</h1>
+</section>
+<section class="grid card-grid">
+    {% for key, template in templates.items() %}
+        <article class="panel">
+            <h2>{{ template.title }}</h2>
+            <p>{{ template.description }}</p>
+            <pre>{{ template.yaml }}</pre>
+            <a class="button" href="{{ url_for('deploy_new', template=key) }}">Use Template</a>
+        </article>
+    {% endfor %}
+</section>
+{% endblock %}

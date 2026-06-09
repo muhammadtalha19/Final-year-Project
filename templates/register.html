@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<section class="panel auth-panel">
+    <h1>Create Account</h1>
+    {% if errors %}
+        <div class="notice danger-note">
+            {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+    {% endif %}
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Name
+            <input type="text" name="name" value="{{ name or '' }}" required>
+        </label>
+        <label>Email
+            <input type="email" name="email" value="{{ email or '' }}" required>
+        </label>
+        <label>Password
+            <input type="password" name="password" minlength="6" required>
+        </label>
+        <button type="submit">Register</button>
+    </form>
+    <p>Already registered? <a href="{{ url_for('login') }}">Login</a>.</p>
+</section>
+{% endblock %}

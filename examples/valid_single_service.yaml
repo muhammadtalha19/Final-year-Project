@@ -1,0 +1,19 @@
+app:
+  name: img2pdf-web
+  environment: production
+
+deployment:
+  type: container
+  image: dockertalha19/img2pdf
+  port: 80
+  replicas: 1
+
+resources:
+  cpu: 1
+  memory: 512Mi
+
+requirements:
+  max_monthly_cost_usd: 20
+  min_uptime_percent: 99.9
+  preferred_region: asia
+  public_access: true

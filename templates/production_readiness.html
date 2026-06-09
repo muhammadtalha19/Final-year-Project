@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Production Readiness{% endblock %}
+{% block content %}
+<section class="panel">
+    <span class="label">Production MVP</span>
+    <h1>Production Readiness Checklist</h1>
+    <p class="empty">This page separates what is implemented for the controlled SME beta demo from what belongs in a later production hardening cycle.</p>
+</section>
+
+<section class="grid page-grid">
+    <article class="panel">
+        <h2>Implemented</h2>
+        <div class="checklist">
+            {% for item in implemented %}
+                <p><span class="status success">done</span> {{ item }}</p>
+            {% endfor %}
+        </div>
+    </article>
+
+    <article class="panel">
+        <h2>Production Future Work</h2>
+        <div class="checklist">
+            {% for item in future_work %}
+                <p><span class="status warning">future</span> {{ item }}</p>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+
+<section class="panel">
+    <h2>Infrastructure Note</h2>
+    {% if phase13_skipped %}
+        <p class="notice">Docker/Gunicorn/Sentry/security-header work was intentionally skipped in this pass to conserve usage and avoid risky backend refactors.</p>
+    {% endif %}
+    <p>Real deployments remain controlled by safety flags, connected user-owned cloud accounts, provider readiness, billing acknowledgement, and confirmation.</p>
+</section>
+
+<section class="panel">
+    <h2>Public Demo Mode</h2>
+    <p>Current public demo mode can run dry-runs safely without creating cloud resources.</p>
+    <p>Real deployments require a connected user cloud account, enabled safety flags, billing acknowledgement, approval, and the background queue when queue mode is enabled.</p>
+    <p>GCP real connection may be blocked when service-account key creation is disabled by organization policy. AWS and Azure are recommended for controlled real demos.</p>
+</section>
+
+{% if queue_status %}
+<section class="panel">
+    <h2>Background Queue</h2>
+    <div class="summary-grid">
+        <div class="summary-card"><span class="label">Queue Name</span><strong>{{ queue_status.queue_name }}</strong></div>
+        <div class="summary-card"><span class="label">Redis Reachable</span><strong>{{ queue_status.redis_reachable }}</strong></div>
+        <div class="summary-card"><span class="label">Queued Jobs</span><strong>{{ queue_status.queued_job_count }}</strong></div>
+        <div class="summary-card"><span class="label">Failed Jobs</span><strong>{{ queue_status.failed_job_count }}</strong></div>
+    </div>
+    <p class="empty">{{ queue_status.message }} Keep the worker running for real deployments.</p>
+</section>
+{% endif %}
+{% endblock %}
